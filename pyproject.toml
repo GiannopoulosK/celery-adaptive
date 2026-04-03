@@ -1,0 +1,96 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "celery-adaptive"
+version = "0.1.0"
+description = "Self-healing, health-aware, and batching-capable Celery tasks."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Konstantinos Giannopoulos", email = "giannopoulosk.data@gmail.com" }
+]
+keywords = ["django", "celery", "queue", "tasks", "background"]
+classifiers = [
+    "Framework :: Celery",
+    "Framework :: Django",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = [
+    "celery>=5.0.0",
+]
+
+[project.optional-dependencies]
+redis = ["redis>=5.0.0"]
+rabbitmq = ["requests>=2.31"]
+django = ["django>=4.2"]
+metrics = ["prometheus-client>=0.20"]
+all = [
+    "celery-adaptive[redis,rabbitmq,django,metrics]"
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-django>=4.8",
+    "factory-boy>=3.3",
+    "ruff>=0.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/GiannopoulosK/celery-adaptive"
+Documentation = "https://github.com/GiannopoulosK/celery-adaptive#readme"
+Repository = "https://github.com/GiannopoulosK/celery-adaptive.git"
+Issues = "https://github.com/GiannopoulosK/celery-adaptive/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["celery_adaptive*"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "C90",
+    "I",
+    "N",
+    "B",
+    "A",
+    "C4",
+    "T10",
+    "SIM",
+    "W",
+    "UP",
+]
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+force-wrap-aliases = true
+split-on-trailing-comma = true
+
+[tool.ruff.lint.flake8-quotes]
+docstring-quotes = "double"
+inline-quotes = "double"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pytest.ini_options]
+python_files = "test_*.py"

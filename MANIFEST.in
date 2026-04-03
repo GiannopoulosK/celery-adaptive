@@ -1,0 +1,4 @@
+include LICENSE
+include README.md
+recursive-include celery_adaptive/health/backends *.lua
+recursive-include celery_adaptive/contrib/django/templates *
