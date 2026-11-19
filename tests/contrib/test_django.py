@@ -22,6 +22,7 @@ if not settings.configured:
         },
         ROOT_URLCONF="tests.contrib.django_urls",
         ALLOWED_HOSTS=["testserver"],
+        SECRET_KEY="celery-adaptive-tests",
     )
     django.setup()
 
