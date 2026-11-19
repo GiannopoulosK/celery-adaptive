@@ -23,6 +23,8 @@ Use it through :func:`celery_adaptive.adaptive_task` or directly::
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -178,6 +180,22 @@ class AdaptiveTask(Task):
             self._on_broker_recovered()
         self._on_published(options)
         return result
+
+    async def aapply_async(self, args=None, kwargs=None, **options):
+        """
+        Async counterpart of :meth:`apply_async` for asyncio applications.
+
+        Publishing does blocking network I/O (and a fallback may run the
+        task inline), so it runs in a worker thread instead of stalling the
+        event loop.
+        """
+        return await asyncio.to_thread(
+            functools.partial(self.apply_async, args, kwargs, **options)
+        )
+
+    async def adelay(self, *args, **kwargs):
+        """Async counterpart of :meth:`delay`: ``await task.adelay(1, 2)``."""
+        return await self.aapply_async(args, kwargs)
 
     def after_return(self, status, retval, task_id, args, kwargs, einfo):
         """Release the deduplication key once the task reaches a final state.

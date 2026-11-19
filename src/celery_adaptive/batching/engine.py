@@ -18,6 +18,8 @@ periodic task (see :func:`celery_adaptive.beat_schedule`).
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -70,6 +72,10 @@ class BatchTask(Task):
             self.flush(trigger="time")
             return True
         return False
+
+    async def apush(self, **payload: Any) -> bool:
+        """Async counterpart of :meth:`push`, run in a worker thread."""
+        return await asyncio.to_thread(functools.partial(self.push, **payload))
 
     def flush(self, trigger: str = "manual") -> int:
         """
