@@ -34,6 +34,7 @@ def setup(
     *,
     config: dict | None = None,
     redis_client=None,
+    app=None,
 ) -> None:
     """
     Configure celery-adaptive. Call once at application startup.
@@ -42,6 +43,10 @@ def setup(
         config: Settings overriding :data:`celery_adaptive.conf.DEFAULTS`.
         redis_client: A ``redis.Redis`` client used for deduplication,
             batching and the outbox. Alternatively set ``REDIS_URL``.
+        app: Your Celery app. When given, broker connection timeouts are
+            bounded by ``BROKER_TIMEOUT`` so outages are detected in about a
+            second instead of 4s (AMQP) or never (Redis transport). See
+            :func:`celery_adaptive.core.broker.tune_broker_timeouts`.
 
     Calling ``setup()`` again replaces the previous configuration.
     """
@@ -53,6 +58,11 @@ def setup(
 
     if redis_client is not None:
         set_redis_client(redis_client)
+
+    if app is not None:
+        from .core.broker import tune_broker_timeouts
+
+        tune_broker_timeouts(app)
 
 
 def __getattr__(name):
