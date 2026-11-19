@@ -42,6 +42,9 @@ dev = [
     "ruff>=0.4",
 ]
 
+[project.scripts]
+celery-adaptive = "celery_adaptive.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/GiannopoulosK/celery-adaptive"
 Documentation = "https://github.com/GiannopoulosK/celery-adaptive#readme"
