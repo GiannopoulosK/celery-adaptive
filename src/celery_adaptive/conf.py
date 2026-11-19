@@ -35,7 +35,12 @@ DEFAULTS: dict[str, Any] = {
     "DEDUP_KEY_PREFIX": "cadp:",
     "DISABLE_DEDUPLICATION": False,
     # Dispatch
-    "SYNC_FALLBACK": True,
+    # What to do when the broker is unreachable: "sync" runs the task inline,
+    # "outbox" stores it in Redis for replay, "raise" raises
+    # BrokerUnavailableError.
+    "FALLBACK": "sync",
+    "OUTBOX_KEY": "cadp:outbox",
+    "OUTBOX_AUTO_REPLAY": True,
     "FORCE_SYNC": False,
     "BROKER_TIMEOUT": 1.0,
     "LOG_DECISIONS": False,
@@ -55,7 +60,9 @@ EXPECTED_TYPES: dict[str, type | tuple[type, ...]] = {
     "DEDUPLICATION_TTL": int,
     "DEDUP_KEY_PREFIX": str,
     "DISABLE_DEDUPLICATION": bool,
-    "SYNC_FALLBACK": bool,
+    "FALLBACK": str,
+    "OUTBOX_KEY": str,
+    "OUTBOX_AUTO_REPLAY": bool,
     "FORCE_SYNC": bool,
     "BROKER_TIMEOUT": (int, float),
     "LOG_DECISIONS": bool,
@@ -66,6 +73,7 @@ EXPECTED_TYPES: dict[str, type | tuple[type, ...]] = {
 }
 
 REQUIRED_PRIORITIES = frozenset({"high", "default", "low"})
+FALLBACK_STRATEGIES = frozenset({"sync", "outbox", "raise"})
 
 
 def _type_name(expected: type | tuple[type, ...]) -> str:
@@ -110,6 +118,12 @@ def validate(user_settings: dict) -> dict[str, Any]:
     missing = REQUIRED_PRIORITIES - merged["QUEUE_MAP"].keys()
     if missing:
         raise ConfigurationError(f"{PREFIX} QUEUE_MAP missing {sorted(missing)}")
+
+    if merged["FALLBACK"] not in FALLBACK_STRATEGIES:
+        raise ConfigurationError(
+            f"{PREFIX} FALLBACK must be one of {sorted(FALLBACK_STRATEGIES)}, "
+            f"got {merged['FALLBACK']!r}."
+        )
 
     for name, value in (
         ("DEDUPLICATION_TTL", merged["DEDUPLICATION_TTL"]),

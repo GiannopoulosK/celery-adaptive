@@ -75,13 +75,16 @@ class CircuitBreaker:
                 return True
             return False
 
-    def record_success(self) -> None:
+    def record_success(self) -> bool:
+        """Record a successful publish. Returns True if this closed the circuit."""
         with self._lock:
-            if self._state is not CircuitState.CLOSED:
+            recovered = self._state is not CircuitState.CLOSED
+            if recovered:
                 logger.info("Circuit '%s' closed: broker reachable again.", self.name)
             self._state = CircuitState.CLOSED
             self._failures = 0
             self._probe_in_flight = False
+            return recovered
 
     def record_failure(self) -> None:
         with self._lock:

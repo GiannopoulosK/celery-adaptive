@@ -55,7 +55,7 @@ def test_broker_errors_raise_when_fallback_disabled(configured, broker_down):
     from celery_adaptive import adaptive_task
     from celery_adaptive.exceptions import BrokerUnavailableError
 
-    @adaptive_task(fallback_sync=False)
+    @adaptive_task(fallback="raise")
     def add(x, y):
         return x + y
 

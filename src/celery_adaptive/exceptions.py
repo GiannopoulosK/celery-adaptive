@@ -13,7 +13,8 @@ class BrokerUnavailableError(CeleryAdaptiveError):
     """
     Raised when the broker is unreachable and sync fallback is disabled.
 
-    Occurs when the health check fails and ``SYNC_FALLBACK`` is False.
+    Raised when ``FALLBACK`` is ``"raise"``, or when it is ``"outbox"`` and
+    the outbox cannot store the task either.
     """
 
 

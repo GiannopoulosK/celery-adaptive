@@ -161,7 +161,7 @@ def test_lock_released_after_inline_fallback_completes(configured, broker_down):
 def test_lock_released_when_dispatch_raises(celery_app, redis, broker_down):
     from celery_adaptive.exceptions import BrokerUnavailableError
 
-    celery_adaptive.setup(config={"SYNC_FALLBACK": False}, redis_client=redis)
+    celery_adaptive.setup(config={"FALLBACK": "raise"}, redis_client=redis)
 
     @adaptive_task(deduplicate=True)
     def job(x):

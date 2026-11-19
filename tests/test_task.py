@@ -152,7 +152,7 @@ def test_inline_fallback_captures_task_exceptions(configured, broker_down):
 def test_setting_disables_fallback(celery_app, broker_down):
     from celery_adaptive.exceptions import BrokerUnavailableError
 
-    celery_adaptive.setup(config={"SYNC_FALLBACK": False})
+    celery_adaptive.setup(config={"FALLBACK": "raise"})
 
     @adaptive_task
     def job():
