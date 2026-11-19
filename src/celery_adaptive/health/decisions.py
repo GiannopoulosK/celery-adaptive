@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-logger = logging.getLogger("django_smart_queue.health.decisions")
+logger = logging.getLogger(__name__)
 
 
 class Action(Enum):

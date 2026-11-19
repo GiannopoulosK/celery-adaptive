@@ -1,5 +1,5 @@
 """
-Deduplication layer for django-smart-queue.
+Deduplication layer for celery-adaptive.
 
 Uses Redis SET NX EX for atomic locking. Keys are derived from a hash of
 task name and arguments. Failures degrade gracefully (fail-open).
@@ -11,7 +11,7 @@ import logging
 
 from ..conf import conf
 
-logger = logging.getLogger("django_smart_queue.idempotency")
+logger = logging.getLogger(__name__)
 
 
 def _make_key(task_name: str, args: tuple | list, kwargs: dict) -> str:

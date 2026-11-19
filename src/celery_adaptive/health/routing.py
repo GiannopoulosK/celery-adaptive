@@ -13,7 +13,7 @@ from ..metrics.exporters import record_routing_decision, record_sync_fallback
 from ..redis_client import get_redis_client
 from .decisions import Action
 
-logger = logging.getLogger("django_smart_queue.health.routing")
+logger = logging.getLogger(__name__)
 
 _checker = None
 

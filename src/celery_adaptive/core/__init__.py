@@ -1,4 +1,4 @@
-"""Core public API for django-smart-queue."""
+"""Core public API for celery-adaptive."""
 
 from .decorators import adaptive_task
 

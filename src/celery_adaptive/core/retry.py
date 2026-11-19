@@ -1,5 +1,5 @@
 """
-Retry helpers for django-smart-queue.
+Retry helpers for celery-adaptive.
 
 Provides exponential backoff with optional jitter.
 """
