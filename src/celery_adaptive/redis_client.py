@@ -1,53 +1,68 @@
 """
 Redis client registry for celery-adaptive.
 
-Decouples Redis access from any framework. The client is registered
-once via setup(redis_client=...) and retrieved here by internal code.
-
-Django users: celery_adaptive.contrib.django may register a client
-automatically via AppConfig.ready().
+Decouples Redis access from any framework. A client is either registered
+explicitly via ``setup(redis_client=...)`` / a framework integration, or
+created lazily from the ``REDIS_URL`` setting on first use.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _redis_client: Any | None = None
+_lock = threading.Lock()
 
 
 def set_redis_client(client: Any) -> None:
-    """
-    Register a Redis client instance.
-
-    Typically called via setup(redis_client=...) or a framework integration.
-    """
+    """Register a Redis client instance (a ``redis.Redis`` or compatible)."""
     global _redis_client
 
-    if _redis_client is not None:
-        logger.warning("Redis client is already set — overriding existing client.")
+    if _redis_client is not None and _redis_client is not client:
+        logger.debug("Replacing previously registered Redis client.")
 
     _redis_client = client
 
 
 def get_redis_client() -> Any | None:
     """
-    Return the registered Redis client, or None if unavailable.
+    Return the Redis client, or ``None`` if none is available.
 
-    Never raises — callers should degrade gracefully if Redis is missing.
+    Never raises: callers degrade gracefully when Redis is missing.
     """
-    if _redis_client is None:
-        logger.debug("No Redis client registered — Redis features will be skipped.")
+    global _redis_client
+
+    if _redis_client is not None:
+        return _redis_client
+
+    from .conf import conf
+
+    url = conf.REDIS_URL
+    if not url:
+        return None
+
+    with _lock:
+        if _redis_client is None:
+            try:
+                import redis
+            except ImportError:
+                logger.warning(
+                    "REDIS_URL is set but the 'redis' package is not installed. "
+                    "Install celery-adaptive[redis]."
+                )
+                return None
+            timeout = float(conf.BROKER_TIMEOUT)
+            _redis_client = redis.Redis.from_url(
+                url, socket_connect_timeout=timeout, socket_timeout=timeout
+            )
     return _redis_client
 
 
 def reset_redis_client() -> None:
-    """
-    Clear the registered Redis client.
-
-    Intended for tests.
-    """
+    """Clear the registered Redis client. Intended for tests."""
     global _redis_client
     _redis_client = None

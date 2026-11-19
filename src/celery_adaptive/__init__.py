@@ -34,12 +34,14 @@ def setup(
 ) -> None:
     """
     Configure celery-adaptive. Call once at application startup.
+
+    Args:
+        config: Settings overriding :data:`celery_adaptive.conf.DEFAULTS`.
+        redis_client: A ``redis.Redis`` client used for deduplication,
+            batching and the outbox. Alternatively set ``REDIS_URL``.
+
+    Calling ``setup()`` again replaces the previous configuration.
     """
-    if settings.is_configured:
-        import logging
-
-        logging.getLogger(__name__).info("celery-adaptive is already configured.")
-
     settings.configure(config or {})
 
     if redis_client is not None:

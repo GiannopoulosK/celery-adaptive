@@ -31,6 +31,8 @@ def configured(celery_app, redis):
 
 @pytest.fixture(autouse=True)
 def _reset_state():
+    conf.reset()
+    reset_redis_client()
     yield
     conf.reset()
     reset_redis_client()
