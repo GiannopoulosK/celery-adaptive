@@ -151,6 +151,9 @@ def replay(app=None, *, limit: int | None = None, redis_client=None) -> int:
 
     if published:
         logger.info("Replayed %d task(s) from the outbox.", published)
+        from ..metrics.exporters import record_outbox_replayed
+
+        record_outbox_replayed(published)
     return published
 
 

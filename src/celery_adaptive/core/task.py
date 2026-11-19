@@ -35,6 +35,7 @@ from kombu.utils.url import maybe_sanitize_url
 
 from ..conf import FALLBACK_STRATEGIES, conf
 from ..exceptions import BrokerUnavailableError, ConfigurationError
+from ..metrics.exporters import record_dedup_hit, record_fallback, record_published
 from ..redis_client import get_redis_client
 from .circuit import get_breaker
 from .idempotency import DEDUP_HEADER, DedupKeyFunc, acquire, make_dedup_key, release
@@ -333,13 +334,13 @@ class AdaptiveTask(Task):
     # -- hooks (metrics, outbox replay)
 
     def _on_published(self, options: dict[str, Any]) -> None:
-        pass
+        record_published(self.name, self._effective_queue(options))
 
     def _on_dedup_hit(self) -> None:
-        pass
+        record_dedup_hit(self.name)
 
     def _on_fallback(self, strategy: str, call: _Dispatch) -> None:
-        pass
+        record_fallback(self.name, strategy)
 
     def _on_broker_recovered(self) -> None:
         if not conf.OUTBOX_AUTO_REPLAY:

@@ -15,6 +15,7 @@ def test_metrics_package_is_importable():
     import celery_adaptive.metrics as metrics
 
     metrics.record_dedup_hit("t")
+    metrics.record_dedup_hit("t")
     payload, content_type = metrics.get_latest_metrics()
     assert b"celery_adaptive_dedup_hits_total" in payload
     assert content_type.startswith("text/plain")

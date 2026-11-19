@@ -63,6 +63,7 @@ class CircuitBreaker:
         ):
             self._state = CircuitState.HALF_OPEN
             self._probe_in_flight = False
+            self._report()
 
     def allow(self) -> bool:
         """Return True if a publish attempt should be made."""
@@ -84,7 +85,9 @@ class CircuitBreaker:
             self._state = CircuitState.CLOSED
             self._failures = 0
             self._probe_in_flight = False
-            return recovered
+        if recovered:
+            self._report()
+        return recovered
 
     def record_failure(self) -> None:
         with self._lock:
@@ -111,6 +114,12 @@ class CircuitBreaker:
         self._state = CircuitState.OPEN
         self._opened_at = self._clock()
         self._probe_in_flight = False
+        self._report()
+
+    def _report(self) -> None:
+        from ..metrics.exporters import record_circuit_state
+
+        record_circuit_state(self.name, self._state.value)
 
     def __repr__(self) -> str:
         return f"<CircuitBreaker {self.name!r} state={self.state.value}>"

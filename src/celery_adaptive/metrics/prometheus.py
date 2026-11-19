@@ -1,10 +1,18 @@
 """
-Unified Prometheus metrics for celery-adaptive.
+Prometheus metrics for celery-adaptive.
+
+Metrics are registered on the default ``prometheus_client`` registry when
+the package is installed (``pip install celery-adaptive[metrics]``) and are
+no-ops otherwise. Expose them with your framework's metrics endpoint, or the
+Django/FastAPI integrations. For multi-process servers (gunicorn, uWSGI) use
+prometheus_client's multiprocess mode.
 """
+
+from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger("celery_adaptive.metrics")
+logger = logging.getLogger(__name__)
 
 try:
     from prometheus_client import (
@@ -16,12 +24,12 @@ try:
     )
 
     _PROMETHEUS_AVAILABLE = True
-except ImportError:
+except ImportError:  # pragma: no cover - exercised via monkeypatch
     _PROMETHEUS_AVAILABLE = False
 
 
 class _NoopMetric:
-    def labels(self, **_):
+    def labels(self, *_, **__):
         return self
 
     def inc(self, *_):
@@ -36,60 +44,69 @@ class _NoopMetric:
 
 _NOOP = _NoopMetric()
 
+#: Numeric encoding of circuit breaker states for the ``circuit_state`` gauge.
+CIRCUIT_STATE_VALUES = {"closed": 0, "half_open": 1, "open": 2}
 
 if _PROMETHEUS_AVAILABLE:
-    TASKS_ENQUEUED = Counter(
-        "celery_adaptive_tasks_enqueued_total",
-        "Total tasks successfully enqueued",
+    # -- Dispatch --
+    TASKS_PUBLISHED = Counter(
+        "celery_adaptive_tasks_published_total",
+        "Tasks published to the broker",
         ["task_name", "queue"],
     )
     DEDUP_HITS = Counter(
         "celery_adaptive_dedup_hits_total",
-        "Dispatches suppressed by deduplication",
+        "Dispatches suppressed because an identical task was in flight",
         ["task_name"],
     )
-    SYNC_FALLBACKS = Counter(
-        "celery_adaptive_sync_fallbacks_total",
-        "Tasks that bypassed the broker due to health issues",
-        ["task_name", "reason"],
+    FALLBACKS = Counter(
+        "celery_adaptive_fallbacks_total",
+        "Dispatches that could not reach the broker, by fallback strategy",
+        ["task_name", "strategy"],
+    )
+    CIRCUIT_STATE = Gauge(
+        "celery_adaptive_circuit_state",
+        "Broker circuit breaker state (0=closed, 1=half-open, 2=open)",
+        ["broker"],
+    )
+    OUTBOX_REPLAYED = Counter(
+        "celery_adaptive_outbox_replayed_total",
+        "Tasks published from the outbox after the broker recovered",
+    )
+    ROUTING_DECISIONS = Counter(
+        "celery_adaptive_routing_decisions_total",
+        "Health-based routing decisions",
+        ["action", "queue"],
     )
 
     # -- Batching --
     BATCH_SIZE = Histogram(
         "celery_adaptive_batch_size",
-        "Items per flushed batch",
+        "Payloads per published batch",
         ["task_name"],
-        buckets=[1, 10, 50, 100, 500],
+        buckets=[1, 5, 10, 25, 50, 100, 250, 500, 1000],
     )
     BATCH_FLUSHES = Counter(
         "celery_adaptive_batch_flushes_total",
-        "Batch flush triggers",
+        "Published batches by trigger (size, time, stale, manual, unbuffered)",
         ["task_name", "trigger"],
     )
 
-    # -- Infrastructure Health --
+    # -- Infrastructure health (updated by the health monitor) --
     BROKER_UP = Gauge("celery_adaptive_broker_up", "1 if the broker is reachable")
     QUEUE_DEPTH = Gauge(
         "celery_adaptive_queue_depth", "Messages waiting per queue", ["queue"]
     )
-    REDIS_LATENCY = Gauge("celery_adaptive_redis_latency_ms", "Redis round-trip time")
+    REDIS_LATENCY = Gauge(
+        "celery_adaptive_redis_latency_ms", "Redis round-trip time in milliseconds"
+    )
     CELERY_ACTIVE = Gauge(
         "celery_adaptive_worker_active_tasks", "Active tasks per worker", ["worker"]
     )
-
-    # -- Routing --
-    ROUTING_DECISIONS = Counter(
-        "celery_adaptive_routing_decisions_total",
-        "Routing actions taken",
-        ["action", "queue"],
-    )
-
-else:
-    TASKS_ENQUEUED = SYNC_FALLBACKS = DEDUP_HITS = BATCH_SIZE = BATCH_FLUSHES = _NOOP
-    BROKER_UP = QUEUE_DEPTH = REDIS_LATENCY = CELERY_ACTIVE = ROUTING_DECISIONS = _NOOP
-
-
-# ── Health snapshot → gauges ──────────────────────────────────────────────────
+else:  # pragma: no cover
+    TASKS_PUBLISHED = DEDUP_HITS = FALLBACKS = CIRCUIT_STATE = _NOOP
+    OUTBOX_REPLAYED = ROUTING_DECISIONS = BATCH_SIZE = BATCH_FLUSHES = _NOOP
+    BROKER_UP = QUEUE_DEPTH = REDIS_LATENCY = CELERY_ACTIVE = _NOOP
 
 
 def update_health_metrics(snapshot) -> None:
