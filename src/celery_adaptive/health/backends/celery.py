@@ -22,7 +22,8 @@ class WorkerStats:
     @property
     def saturated(self) -> bool:
         """True when every pool slot on this worker is busy."""
-        return bool(self.max_concurrency) and self.active_tasks >= self.max_concurrency
+        limit = self.max_concurrency
+        return limit is not None and limit > 0 and self.active_tasks >= limit
 
 
 @dataclass

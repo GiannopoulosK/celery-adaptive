@@ -125,7 +125,7 @@ class HealthSnapshot:
             return asdict(result) if result is not None else None
 
         celery = dump(self.celery)
-        if celery is not None:
+        if celery is not None and self.celery is not None:
             celery["saturated"] = self.celery.saturated
         return {
             "status": self.status,

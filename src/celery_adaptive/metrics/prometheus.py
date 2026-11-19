@@ -104,9 +104,9 @@ if _PROMETHEUS_AVAILABLE:
         "celery_adaptive_worker_active_tasks", "Active tasks per worker", ["worker"]
     )
 else:  # pragma: no cover
-    TASKS_PUBLISHED = DEDUP_HITS = FALLBACKS = CIRCUIT_STATE = _NOOP
-    OUTBOX_REPLAYED = ROUTING_DECISIONS = BATCH_SIZE = BATCH_FLUSHES = _NOOP
-    BROKER_UP = QUEUE_DEPTH = REDIS_LATENCY = CELERY_ACTIVE = _NOOP
+    TASKS_PUBLISHED = DEDUP_HITS = FALLBACKS = CIRCUIT_STATE = _NOOP  # type: ignore[assignment]
+    OUTBOX_REPLAYED = ROUTING_DECISIONS = BATCH_SIZE = BATCH_FLUSHES = _NOOP  # type: ignore[assignment]
+    BROKER_UP = QUEUE_DEPTH = REDIS_LATENCY = CELERY_ACTIVE = _NOOP  # type: ignore[assignment]
 
 
 def update_health_metrics(snapshot) -> None:

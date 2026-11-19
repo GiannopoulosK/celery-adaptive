@@ -39,9 +39,11 @@ class Decision:
 
 
 class DecisionEngine:
-    def __init__(self, depth_critical: int = 2000, reroute: Mapping[str, str] = ()):
+    def __init__(
+        self, depth_critical: int = 2000, reroute: Mapping[str, str] | None = None
+    ):
         self.depth_critical = depth_critical
-        self.reroute = dict(reroute)
+        self.reroute = dict(reroute or {})
 
     @classmethod
     def from_conf(cls, health: Mapping) -> DecisionEngine:
