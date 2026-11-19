@@ -2,7 +2,7 @@
 Django settings bridge for celery-adaptive.
 
 Reads ``settings.CELERY_ADAPTIVE`` (a dict) and calls
-``celery_adaptive.setup(conf=...)`` so application code never has to.
+``celery_adaptive.setup(config=...)`` so application code never has to.
 
 Place this in INSTALLED_APPS via the AppConfig, not directly.
 """
@@ -33,4 +33,4 @@ def configure_from_django_settings() -> None:
     import celery_adaptive
 
     user_conf = getattr(settings, "CELERY_ADAPTIVE", {})
-    celery_adaptive.setup(conf=user_conf)
+    celery_adaptive.setup(config=user_conf)
