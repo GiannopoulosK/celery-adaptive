@@ -7,7 +7,7 @@ import celery_adaptive
 from celery_adaptive import adaptive_task
 from celery_adaptive.core.idempotency import acquire, make_dedup_key, release
 
-from .conftest import queue_depth, running_worker
+from .conftest import queue_depth, running_worker, wait_for
 
 # --- key derivation --------------------------------------------------------
 
@@ -182,7 +182,8 @@ def test_worker_releases_lock_when_task_finishes(configured, celery_app):
     with running_worker(celery_app):
         first = job.delay(21)
         assert first.get(timeout=10) == 42
-        assert redis.keys("cadp:*") == []
+        # The result is stored just before after_return releases the key.
+        assert wait_for(lambda: redis.keys("cadp:*") == [])
         second = job.delay(21)
         assert second.id != first.id
         assert second.get(timeout=10) == 42
@@ -199,7 +200,7 @@ def test_worker_releases_lock_when_task_fails(configured, celery_app):
         result = job.delay(1)
         with pytest.raises(ValueError):
             result.get(timeout=10)
-        assert redis.keys("cadp:*") == []
+        assert wait_for(lambda: redis.keys("cadp:*") == [])
 
 
 def test_retry_keeps_lock_and_is_not_suppressed(configured, celery_app):
@@ -217,5 +218,5 @@ def test_retry_keeps_lock_and_is_not_suppressed(configured, celery_app):
 
     with running_worker(celery_app):
         assert flaky.delay(1).get(timeout=10) == "done"
+        assert wait_for(lambda: redis.keys("cadp:*") == [])
     assert attempts == [0, 1, 2]
-    assert redis.keys("cadp:*") == []

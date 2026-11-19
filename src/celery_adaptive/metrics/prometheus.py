@@ -68,10 +68,13 @@ if _PROMETHEUS_AVAILABLE:
     )
 
     # -- Infrastructure Health --
-    REDIS_LATENCY = Gauge("celery_adaptive_redis_latency_ms", "Redis RTT")
-    RABBITMQ_DEPTH = Gauge("celery_adaptive_rabbitmq_depth", "Queue depth", ["queue"])
+    BROKER_UP = Gauge("celery_adaptive_broker_up", "1 if the broker is reachable")
+    QUEUE_DEPTH = Gauge(
+        "celery_adaptive_queue_depth", "Messages waiting per queue", ["queue"]
+    )
+    REDIS_LATENCY = Gauge("celery_adaptive_redis_latency_ms", "Redis round-trip time")
     CELERY_ACTIVE = Gauge(
-        "celery_adaptive_worker_active_tasks", "Active tasks", ["worker"]
+        "celery_adaptive_worker_active_tasks", "Active tasks per worker", ["worker"]
     )
 
     # -- Routing --
@@ -83,25 +86,27 @@ if _PROMETHEUS_AVAILABLE:
 
 else:
     TASKS_ENQUEUED = SYNC_FALLBACKS = DEDUP_HITS = BATCH_SIZE = BATCH_FLUSHES = _NOOP
-    REDIS_LATENCY = RABBITMQ_DEPTH = CELERY_ACTIVE = ROUTING_DECISIONS = _NOOP
+    BROKER_UP = QUEUE_DEPTH = REDIS_LATENCY = CELERY_ACTIVE = ROUTING_DECISIONS = _NOOP
 
 
 # ── Health snapshot → gauges ──────────────────────────────────────────────────
 
 
 def update_health_metrics(snapshot) -> None:
-    """Updates gauges based on a HealthSnapshot."""
+    """Update gauges from a :class:`~celery_adaptive.health.HealthSnapshot`."""
     if not _PROMETHEUS_AVAILABLE:
         return
 
-    if snapshot.redis and snapshot.redis.healthy:
+    if snapshot.broker is not None:
+        BROKER_UP.set(1 if snapshot.broker.healthy else 0)
+
+    for queue, depth in snapshot.queue_depths.items():
+        QUEUE_DEPTH.labels(queue=queue).set(depth)
+
+    if snapshot.redis is not None and snapshot.redis.healthy:
         REDIS_LATENCY.set(snapshot.redis.latency_ms or 0)
 
-    if snapshot.rabbitmq and snapshot.rabbitmq.healthy:
-        for q in snapshot.rabbitmq.queues:
-            RABBITMQ_DEPTH.labels(queue=q.name).set(q.messages)
-
-    if snapshot.celery and snapshot.celery.healthy:
+    if snapshot.celery is not None and snapshot.celery.healthy:
         for w in snapshot.celery.workers:
             CELERY_ACTIVE.labels(worker=w.hostname).set(w.active_tasks)
 

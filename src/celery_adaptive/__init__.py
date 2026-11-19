@@ -52,9 +52,9 @@ def setup(
     """
     settings.configure(config or {})
     reset_breakers()
-    from .health.routing import reset_checker
+    from .health.routing import reset_monitor
 
-    reset_checker()
+    reset_monitor()
 
     if redis_client is not None:
         set_redis_client(redis_client)

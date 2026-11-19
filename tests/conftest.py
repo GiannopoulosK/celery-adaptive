@@ -1,4 +1,5 @@
 import contextlib
+import time
 
 import fakeredis
 import pytest
@@ -44,6 +45,16 @@ def running_worker(app):
     """Run a real worker thread for ``app`` for the duration of the block."""
     with start_worker(app, perform_ping_check=False, loglevel="WARNING") as worker:
         yield worker
+
+
+def wait_for(predicate, timeout: float = 5.0) -> bool:
+    """Poll ``predicate`` until it is truthy or ``timeout`` elapses."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
 
 
 def queue_depth(app, queue: str) -> int:

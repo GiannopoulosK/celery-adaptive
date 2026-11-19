@@ -69,3 +69,25 @@ def test_redis_client_created_lazily_from_url():
 
 def test_no_redis_without_client_or_url():
     assert get_redis_client() is None
+
+
+def test_health_defaults_merged():
+    celery_adaptive.setup(config={"HEALTH": {"ENABLED": True}})
+    assert conf.HEALTH["ENABLED"] is True
+    assert conf.HEALTH["INTERVAL"] == 5.0
+
+
+@pytest.mark.parametrize(
+    "health,match",
+    [
+        ({"NOPE": 1}, "unknown HEALTH keys"),
+        ({"INTERVAL": "5"}, "HEALTH.INTERVAL"),
+        ({"INTERVAL": 0}, "HEALTH.INTERVAL"),
+        ({"QUEUE_DEPTH_WARN": 10, "QUEUE_DEPTH_CRITICAL": 5}, "QUEUE_DEPTH_WARN"),
+        ({"REROUTE": {"default": "default"}}, "itself"),
+        ({"REROUTE": {"default": 1}}, "REROUTE"),
+    ],
+)
+def test_health_validation(health, match):
+    with pytest.raises(ConfigurationError, match=match):
+        celery_adaptive.setup(config={"HEALTH": health})

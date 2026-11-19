@@ -51,7 +51,7 @@ DEFAULTS: dict[str, Any] = {
         "default": "default",
         "low": "low_priority",
     },
-    # Health monitoring, see celery_adaptive.health
+    # Health monitoring, see HEALTH_DEFAULTS and celery_adaptive.health
     "HEALTH": {},
 }
 
@@ -70,6 +70,59 @@ EXPECTED_TYPES: dict[str, type | tuple[type, ...]] = {
     "CIRCUIT_BREAKER_RESET": (int, float),
     "QUEUE_MAP": dict,
     "HEALTH": dict,
+}
+
+HEALTH_DEFAULTS: dict[str, Any] = {
+    # Monitoring is opt-in: it runs a background thread in each process.
+    "ENABLED": False,
+    # Seconds between background checks.
+    "INTERVAL": 5.0,
+    # Ignore snapshots older than this when making routing decisions.
+    "STALE_AFTER": 30.0,
+    # Queues whose depth is measured. None: the QUEUE_MAP queues, the
+    # Celery default queue and all REROUTE sources and targets.
+    "WATCHED_QUEUES": None,
+    "QUEUE_DEPTH_WARN": 500,
+    "QUEUE_DEPTH_CRITICAL": 2000,
+    # {"source_queue": "overflow_queue"}: when the source reaches
+    # QUEUE_DEPTH_CRITICAL, new tasks go to the overflow queue instead
+    # (as long as it is less backed up).
+    "REROUTE": {},
+    # Broker connectivity and queue depth via the Celery connection.
+    "BROKER": True,
+    # Latency/memory of the registered Redis client (reporting only).
+    "REDIS": True,
+    "REDIS_LATENCY_WARN_MS": 50.0,
+    "REDIS_MEMORY_WARN_PCT": 80.0,
+    # Worker stats via `celery inspect` broadcasts. Costs a broadcast
+    # round-trip per check, so it is off by default.
+    "CELERY_INSPECT": False,
+    "INSPECT_TIMEOUT": 1.0,
+    # RabbitMQ management API (optional, adds consumer/rate details).
+    "RABBITMQ_URL": None,
+    "RABBITMQ_USER": "guest",
+    "RABBITMQ_PASSWORD": "guest",
+    "RABBITMQ_VHOST": "/",
+}
+
+HEALTH_TYPES: dict[str, type | tuple[type, ...]] = {
+    "ENABLED": bool,
+    "INTERVAL": (int, float),
+    "STALE_AFTER": (int, float),
+    "WATCHED_QUEUES": (list, tuple, _NONE),
+    "QUEUE_DEPTH_WARN": int,
+    "QUEUE_DEPTH_CRITICAL": int,
+    "REROUTE": dict,
+    "BROKER": bool,
+    "REDIS": bool,
+    "REDIS_LATENCY_WARN_MS": (int, float),
+    "REDIS_MEMORY_WARN_PCT": (int, float),
+    "CELERY_INSPECT": bool,
+    "INSPECT_TIMEOUT": (int, float),
+    "RABBITMQ_URL": (str, _NONE),
+    "RABBITMQ_USER": str,
+    "RABBITMQ_PASSWORD": str,
+    "RABBITMQ_VHOST": str,
 }
 
 REQUIRED_PRIORITIES = frozenset({"high", "default", "low"})
@@ -95,6 +148,40 @@ def _check_type(key: str, value: Any, expected: type | tuple[type, ...]) -> None
         )
 
 
+def validate_health(user_health: dict) -> dict[str, Any]:
+    """Validate the ``HEALTH`` block and merge it over :data:`HEALTH_DEFAULTS`."""
+    unknown = set(user_health) - set(HEALTH_DEFAULTS)
+    if unknown:
+        raise ConfigurationError(
+            f"{PREFIX} unknown HEALTH keys: {sorted(unknown)}. "
+            f"Valid: {sorted(HEALTH_DEFAULTS)}."
+        )
+    for key, value in user_health.items():
+        _check_type(f"HEALTH.{key}", value, HEALTH_TYPES[key])
+
+    health = {**HEALTH_DEFAULTS, **user_health}
+    for key in ("INTERVAL", "STALE_AFTER", "INSPECT_TIMEOUT"):
+        if health[key] <= 0:
+            raise ConfigurationError(f"{PREFIX} HEALTH.{key} must be positive.")
+    if health["QUEUE_DEPTH_WARN"] > health["QUEUE_DEPTH_CRITICAL"]:
+        raise ConfigurationError(
+            f"{PREFIX} HEALTH.QUEUE_DEPTH_WARN must not exceed QUEUE_DEPTH_CRITICAL."
+        )
+    for source, target in health["REROUTE"].items():
+        if not (isinstance(source, str) and isinstance(target, str)):
+            raise ConfigurationError(
+                f"{PREFIX} HEALTH.REROUTE must map queue names to queue names."
+            )
+        if source == target:
+            raise ConfigurationError(
+                f"{PREFIX} HEALTH.REROUTE cannot send '{source}' to itself."
+            )
+    if health["WATCHED_QUEUES"] is not None:
+        health["WATCHED_QUEUES"] = tuple(health["WATCHED_QUEUES"])
+    health["REROUTE"] = MappingProxyType(dict(health["REROUTE"]))
+    return health
+
+
 def validate(user_settings: dict) -> dict[str, Any]:
     """Validate ``user_settings`` and return them merged over the defaults."""
     if not isinstance(user_settings, dict):
@@ -114,6 +201,8 @@ def validate(user_settings: dict) -> dict[str, Any]:
         **DEFAULTS["QUEUE_MAP"],
         **user_settings.get("QUEUE_MAP", {}),
     }
+
+    merged["HEALTH"] = MappingProxyType(validate_health(merged["HEALTH"]))
 
     missing = REQUIRED_PRIORITIES - merged["QUEUE_MAP"].keys()
     if missing:

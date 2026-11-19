@@ -1,12 +1,12 @@
-"""
-Redis health backend for celery-adaptive.
-"""
+"""Redis health backend (latency, memory, clients) for a redis-py client."""
+
+from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-logger = logging.getLogger("celery_adaptive.health.redis")
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -15,50 +15,58 @@ class RedisHealthResult:
     latency_ms: float | None = None
     memory_used_pct: float | None = None
     connected_clients: int | None = None
+    degraded: bool = False
     error: str | None = None
-    raw: dict = field(default_factory=dict)
-
-    @property
-    def degraded(self) -> bool:
-        if not self.healthy:
-            return False
-        return (self.latency_ms is not None and self.latency_ms > 50) or (
-            self.memory_used_pct is not None and self.memory_used_pct > 80
-        )
 
 
 class RedisHealthBackend:
-    """Checks Redis using a redis-py client."""
+    """Checks the Redis used for deduplication, batching and the outbox."""
 
-    def __init__(self, client):
+    name = "redis"
+
+    def __init__(
+        self,
+        client,
+        latency_warn_ms: float = 50.0,
+        memory_warn_pct: float = 80.0,
+    ):
         self._client = client
+        self._latency_warn_ms = latency_warn_ms
+        self._memory_warn_pct = memory_warn_pct
 
     def check(self) -> RedisHealthResult:
         try:
-            # 1. Latency
             start = time.monotonic()
             self._client.ping()
-            latency_ms = (time.monotonic() - start) * 1000
+            latency_ms = round((time.monotonic() - start) * 1000, 2)
 
-            # 2. Memory
-            mem_info = self._client.info("memory")
-            used = mem_info.get("used_memory", 0)
-            total = mem_info.get("maxmemory", 0)
+            pct, clients = self._memory_and_clients()
 
-            # Fallback: if no maxmemory set, we can't reliably calculate pct
-            pct = (used / total * 100) if total > 0 else None
-
-            # 3. Clients
-            client_info = self._client.info("clients")
-            connected = client_info.get("connected_clients")
-
+            degraded = latency_ms >= self._latency_warn_ms or (
+                pct is not None and pct >= self._memory_warn_pct
+            )
             return RedisHealthResult(
                 healthy=True,
-                latency_ms=round(latency_ms, 2),
-                memory_used_pct=round(pct, 1) if pct is not None else None,
-                connected_clients=connected,
-                raw=mem_info,
+                latency_ms=latency_ms,
+                memory_used_pct=pct,
+                connected_clients=clients,
+                degraded=degraded,
             )
         except Exception as exc:
-            logger.error("Redis health check failed: %s", exc)
+            logger.warning("Redis health check failed: %s", exc)
             return RedisHealthResult(healthy=False, error=str(exc))
+
+    def _memory_and_clients(self) -> tuple[float | None, int | None]:
+        # INFO is disabled on some managed Redis offerings; PING succeeding
+        # is enough to call Redis healthy.
+        try:
+            memory = self._client.info("memory")
+            clients = self._client.info("clients").get("connected_clients")
+        except Exception as exc:
+            logger.debug("Redis INFO unavailable: %s", exc)
+            return None, None
+        used = memory.get("used_memory", 0)
+        limit = memory.get("maxmemory", 0)
+        # Without maxmemory there is no meaningful percentage.
+        pct = round(used / limit * 100, 1) if limit else None
+        return pct, clients
