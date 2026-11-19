@@ -12,10 +12,11 @@ license = { text = "MIT" }
 authors = [
     { name = "Konstantinos Giannopoulos", email = "giannopoulosk.data@gmail.com" }
 ]
-keywords = ["django", "celery", "queue", "tasks", "background"]
+keywords = ["celery", "django", "fastapi", "queue", "tasks", "circuit-breaker", "outbox"]
 classifiers = [
     "Framework :: Celery",
     "Framework :: Django",
+    "Framework :: FastAPI",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -30,9 +31,10 @@ dependencies = [
 redis = ["redis>=5.0.0"]
 rabbitmq = ["requests>=2.31"]
 django = ["django>=4.2"]
+fastapi = ["fastapi>=0.110"]
 metrics = ["prometheus-client>=0.20"]
 all = [
-    "celery-adaptive[redis,rabbitmq,django,metrics]"
+    "celery-adaptive[redis,rabbitmq,django,fastapi,metrics]"
 ]
 dev = [
     "pytest>=8.0",
