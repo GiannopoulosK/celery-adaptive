@@ -39,6 +39,7 @@ DEFAULTS: dict = {
         "default": "default",
         "low": "low_priority",
     },
+    "HEALTH": {},
 }
 
 
@@ -57,6 +58,7 @@ EXPECTED_TYPES: dict = {
     "FORCE_SYNC": bool,
     "BROKER_TIMEOUT": (int, float),
     "QUEUE_MAP": dict,
+    "HEALTH": dict,
 }
 
 

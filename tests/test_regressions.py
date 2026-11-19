@@ -95,3 +95,11 @@ def test_broker_errors_raise_when_fallback_disabled(configured, monkeypatch):
     monkeypatch.setattr(routing, "route_task", down)
     with pytest.raises(BrokerUnavailableError):
         add.delay(1, 2)
+
+
+def test_health_settings_are_accepted(celery_app):
+    import celery_adaptive
+    from celery_adaptive.conf import conf
+
+    celery_adaptive.setup(config={"HEALTH": {"RABBITMQ_URL": "http://mq:15672"}})
+    assert conf.HEALTH["RABBITMQ_URL"] == "http://mq:15672"
