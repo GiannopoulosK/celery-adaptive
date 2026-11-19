@@ -103,3 +103,9 @@ def test_health_settings_are_accepted(celery_app):
 
     celery_adaptive.setup(config={"HEALTH": {"RABBITMQ_URL": "http://mq:15672"}})
     assert conf.HEALTH["RABBITMQ_URL"] == "http://mq:15672"
+
+
+def test_star_import_exposes_public_api():
+    namespace: dict = {}
+    exec("from celery_adaptive import *", namespace)
+    assert {"setup", "adaptive_task", "CeleryAdaptiveError"} <= namespace.keys()

@@ -10,10 +10,21 @@ Django users: use celery_adaptive.contrib.django instead.
 
 from .conf import conf as settings
 from .core.decorators import adaptive_task
-from .exceptions import ConfigurationError
+from .exceptions import (
+    BrokerUnavailableError,
+    CeleryAdaptiveError,
+    ConfigurationError,
+)
 from .redis_client import set_redis_client
 
-__all__ = ["setup", "settings", "ConfigurationError", "AdaptiveError", "adaptive_task"]
+__all__ = [
+    "setup",
+    "settings",
+    "adaptive_task",
+    "CeleryAdaptiveError",
+    "ConfigurationError",
+    "BrokerUnavailableError",
+]
 
 
 def setup(
