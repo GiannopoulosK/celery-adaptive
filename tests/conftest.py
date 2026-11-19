@@ -16,28 +16,37 @@ from celery_adaptive.core.circuit import reset_breakers
 from celery_adaptive.redis_client import reset_redis_client
 
 
-@pytest.fixture
-def celery_app():
-    """An isolated Celery app on the in-memory transport, set as current.
+@contextlib.contextmanager
+def isolated_app(*args, **kwargs):
+    """
+    Create a Celery app that does not leak tasks into other tests.
 
-    ``shared_task`` registers tasks on every app created afterwards, so a
-    task defined in one test would shadow a same-named task in the next.
-    Snapshot and restore the finalizer set, and clear the in-memory broker,
-    to keep tests independent.
+    ``shared_task`` (and ``app.task``, which is shared by default) registers
+    tasks on every app finalized afterwards, so a task defined in one test
+    would shadow a same-named task in the next. Snapshot and restore the
+    finalizer set, deregister the app afterwards, and clear the in-memory
+    broker.
     """
     finalizers = set(celery_state._on_app_finalizers)
     memory.Channel.queues.clear()
-
-    app = Celery("tests", broker="memory://", backend="cache+memory://")
+    app = Celery(*args, **kwargs)
     app.conf.task_store_eager_result = True
     app.set_current()
     app.set_default()
-    yield app
+    try:
+        yield app
+    finally:
+        celery_state._on_app_finalizers.clear()
+        celery_state._on_app_finalizers.update(finalizers)
+        celery_state._deregister_app(app)
+        memory.Channel.queues.clear()
 
-    celery_state._on_app_finalizers.clear()
-    celery_state._on_app_finalizers.update(finalizers)
-    celery_state._deregister_app(app)
-    memory.Channel.queues.clear()
+
+@pytest.fixture
+def celery_app():
+    """An isolated Celery app on the in-memory transport, set as current."""
+    with isolated_app("tests", broker="memory://", backend="cache+memory://") as app:
+        yield app
 
 
 @contextlib.contextmanager

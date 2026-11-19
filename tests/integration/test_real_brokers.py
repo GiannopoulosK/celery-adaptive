@@ -12,7 +12,6 @@ import os
 import uuid
 
 import pytest
-from celery import Celery
 
 import celery_adaptive
 from celery_adaptive import adaptive_task, batch_task
@@ -21,7 +20,7 @@ from celery_adaptive.core import outbox
 from celery_adaptive.health.backends.broker import BrokerHealthBackend
 from celery_adaptive.health.backends.rabbitmq import RabbitMQHealthBackend
 
-from ..conftest import running_worker, wait_for
+from ..conftest import isolated_app, running_worker, wait_for
 
 REDIS_URL = os.environ.get("CELERY_ADAPTIVE_TEST_REDIS_URL")
 AMQP_URL = os.environ.get("CELERY_ADAPTIVE_TEST_AMQP_URL")
@@ -57,13 +56,9 @@ def redis_client():
 
 @pytest.fixture(params=brokers)
 def real_app(request, redis_client):
-    from celery import _state
-
-    app = Celery("it", broker=request.param, backend=REDIS_URL)
-    app.set_current()
-    celery_adaptive.setup(config={}, redis_client=redis_client, app=app)
-    yield app
-    _state._deregister_app(app)
+    with isolated_app("it", broker=request.param, backend=REDIS_URL) as app:
+        celery_adaptive.setup(config={}, redis_client=redis_client, app=app)
+        yield app
 
 
 def unique_queue() -> str:

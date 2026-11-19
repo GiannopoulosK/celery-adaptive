@@ -6,7 +6,6 @@ tests exercise the actual exception types and timings users will see.
 import time
 
 import pytest
-from celery import Celery
 from celery.result import EagerResult
 
 import celery_adaptive
@@ -14,18 +13,15 @@ from celery_adaptive import adaptive_task
 from celery_adaptive.core.circuit import CircuitState, get_breaker
 from celery_adaptive.exceptions import BrokerUnavailableError
 
+from ..conftest import isolated_app
+
 DEAD_BROKERS = ["amqp://guest:guest@127.0.0.1:1//", "redis://127.0.0.1:1/0"]
 
 
 @pytest.fixture(params=DEAD_BROKERS, ids=["amqp", "redis"])
 def dead_app(request):
-    from celery import _state
-
-    app = Celery("dead", broker=request.param, backend="cache+memory://")
-    app.conf.task_store_eager_result = True
-    app.set_current()
-    yield app
-    _state._deregister_app(app)
+    with isolated_app("dead", broker=request.param, backend="cache+memory://") as app:
+        yield app
 
 
 def test_sync_fallback_against_unreachable_broker(dead_app):
