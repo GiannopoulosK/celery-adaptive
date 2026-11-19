@@ -11,6 +11,7 @@ Django users: use celery_adaptive.contrib.django instead.
 from .conf import conf as settings
 from .core.circuit import reset_breakers
 from .core.decorators import adaptive_task
+from .core.task import AdaptiveTask
 from .exceptions import (
     BrokerUnavailableError,
     CeleryAdaptiveError,
@@ -22,6 +23,7 @@ __all__ = [
     "setup",
     "settings",
     "adaptive_task",
+    "AdaptiveTask",
     "CeleryAdaptiveError",
     "ConfigurationError",
     "BrokerUnavailableError",
@@ -45,6 +47,9 @@ def setup(
     """
     settings.configure(config or {})
     reset_breakers()
+    from .health.routing import reset_checker
+
+    reset_checker()
 
     if redis_client is not None:
         set_redis_client(redis_client)

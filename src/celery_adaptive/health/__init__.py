@@ -1,6 +1,6 @@
 from .checker import HealthChecker, HealthSnapshot
 from .decisions import Action, Decision, DecisionEngine
-from .routing import route_task
+from .routing import decide
 
 __all__ = [
     "HealthChecker",
@@ -8,5 +8,5 @@ __all__ = [
     "Decision",
     "Action",
     "DecisionEngine",
-    "route_task",
+    "decide",
 ]

@@ -46,11 +46,6 @@ DEFAULTS: dict[str, Any] = {
         "default": "default",
         "low": "low_priority",
     },
-    # Retry helpers
-    "RETRY_MAX_ATTEMPTS": 3,
-    "RETRY_BASE_DELAY": 2,
-    "RETRY_CEILING": 60,
-    "RETRY_JITTER": True,
     # Health monitoring, see celery_adaptive.health
     "HEALTH": {},
 }
@@ -67,10 +62,6 @@ EXPECTED_TYPES: dict[str, type | tuple[type, ...]] = {
     "CIRCUIT_BREAKER_THRESHOLD": int,
     "CIRCUIT_BREAKER_RESET": (int, float),
     "QUEUE_MAP": dict,
-    "RETRY_MAX_ATTEMPTS": int,
-    "RETRY_BASE_DELAY": (int, float),
-    "RETRY_CEILING": (int, float),
-    "RETRY_JITTER": bool,
     "HEALTH": dict,
 }
 
