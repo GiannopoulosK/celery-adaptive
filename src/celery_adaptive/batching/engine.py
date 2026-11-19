@@ -14,6 +14,12 @@ A batch is published when ``max_batch_size`` payloads are buffered, or on
 the next push once the oldest payload is ``max_wait_ms`` old. Buffers that
 stop receiving pushes are drained by the ``celery_adaptive.flush_batches``
 periodic task (see :func:`celery_adaptive.beat_schedule`).
+
+Delivery is at-most-once per batch: payloads are returned to the buffer if
+publishing raises, but a process killed between claiming a batch and
+publishing it loses that batch (up to ``max_batch_size`` payloads). Use
+batching for data that tolerates rare loss (analytics, metrics, audit
+trails with a reconciliation job), not for payments.
 """
 
 from __future__ import annotations
@@ -98,7 +104,19 @@ class BatchTask(Task):
                 if payloads:
                     self._publish(payloads, trigger=trigger)
             except Exception as exc:
-                collector.requeue(self.name, raw)
+                try:
+                    collector.requeue(self.name, raw)
+                except Exception as requeue_exc:
+                    logger.error(
+                        "Flushing '%s' failed (%s) and %d payload(s) could not be "
+                        "returned to the buffer (%s); they are lost: %r",
+                        self.name,
+                        exc,
+                        len(raw),
+                        requeue_exc,
+                        raw,
+                    )
+                    raise
                 logger.warning(
                     "Flushing '%s' failed; %d payload(s) kept in the buffer: %s",
                     self.name,

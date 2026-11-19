@@ -177,6 +177,9 @@ A batch is published when `max_batch_size` payloads are buffered, or on the next
 the oldest is `max_wait_ms` old. Idle buffers are drained by the `celery_adaptive.flush_batches`
 beat task. All bookkeeping happens in atomic Lua scripts that use the Redis server clock, so
 producers on different hosts agree. If publishing fails, payloads go back into the buffer.
+Delivery is at-most-once per batch: a process killed between claiming a batch and
+publishing it loses that batch. Use batching for data that tolerates rare loss (analytics,
+page views, metrics), not for payments.
 
 ### Health monitoring and rerouting
 
