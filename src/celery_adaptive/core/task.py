@@ -176,6 +176,24 @@ class AdaptiveTask(Task):
     def _publish(self, policy: DispatchPolicy, call: _Dispatch, producer):
         """Publish through the circuit breaker, falling back on outages."""
         options = call.options
+        if self._get_app().conf.task_always_eager:
+            # Celery runs the task body inside apply_async: there is no broker,
+            # and errors raised by the task itself (even ConnectionError) must
+            # not be mistaken for an outage.
+            try:
+                return super().apply_async(
+                    call.args,
+                    call.kwargs,
+                    task_id=call.task_id,
+                    producer=producer,
+                    link=call.link,
+                    link_error=call.link_error,
+                    **options,
+                )
+            except BaseException:
+                self._release_dedup(call)
+                raise
+
         options.setdefault("retry_policy", DEFAULT_PUBLISH_RETRY_POLICY)
         breaker = get_breaker(self._broker_key())
 

@@ -68,3 +68,34 @@ def test_propagated_inline_failure_releases_dedup_key(celery_app, redis):
             job.delay(1)
     assert runs == [1, 1]
     assert redis.keys("cadp:*") == []
+
+
+def test_eager_mode_task_connection_error_is_not_a_broker_outage(
+    configured, celery_app
+):
+    celery_app.conf.task_always_eager = True
+    celery_app.conf.task_eager_propagates = True
+    runs = []
+
+    @adaptive_task
+    def call_payment_api():
+        runs.append(1)
+        raise ConnectionError("payment API down")
+
+    for _ in range(3):
+        with pytest.raises(ConnectionError):
+            call_payment_api.delay()
+
+    assert len(runs) == 3  # once per call, never re-run by a fallback
+    assert get_breaker(call_payment_api._broker_key()).state is CircuitState.CLOSED
+
+
+def test_eager_mode_still_returns_results(configured, celery_app):
+    celery_app.conf.task_always_eager = True
+
+    @adaptive_task(deduplicate=True)
+    def add(x, y):
+        return x + y
+
+    assert add.delay(1, 2).get() == 3
+    assert add.delay(1, 2).get() == 3  # key released after the eager run
