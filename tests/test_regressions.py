@@ -53,3 +53,45 @@ def test_health_sync_decision_raises_operational_error(configured, monkeypatch):
             fallback_sync=True,
             original_func=lambda: None,
         )
+
+
+def test_non_broker_errors_are_not_masked_as_sync_fallback(configured, monkeypatch):
+    """Bugs during dispatch must propagate instead of running the task inline."""
+    import pytest
+
+    from celery_adaptive import adaptive_task
+    from celery_adaptive.health import routing
+
+    calls = []
+
+    @adaptive_task()
+    def add(x, y):
+        calls.append((x, y))
+
+    def boom(**_):
+        raise ValueError("bug in routing")
+
+    monkeypatch.setattr(routing, "route_task", boom)
+    with pytest.raises(ValueError):
+        add.delay(1, 2)
+    assert calls == []
+
+
+def test_broker_errors_raise_when_fallback_disabled(configured, monkeypatch):
+    import pytest
+    from kombu.exceptions import OperationalError
+
+    from celery_adaptive import adaptive_task
+    from celery_adaptive.exceptions import BrokerUnavailableError
+    from celery_adaptive.health import routing
+
+    @adaptive_task(fallback_sync=False)
+    def add(x, y):
+        return x + y
+
+    def down(**_):
+        raise OperationalError("connection refused")
+
+    monkeypatch.setattr(routing, "route_task", down)
+    with pytest.raises(BrokerUnavailableError):
+        add.delay(1, 2)

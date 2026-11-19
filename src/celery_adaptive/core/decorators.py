@@ -12,6 +12,10 @@ from .retry import get_retry_kwargs
 
 logger = logging.getLogger(__name__)
 
+# Only connectivity failures should trigger the sync fallback. Anything else
+# (bad arguments, serialization errors, bugs) must propagate to the caller.
+_BROKER_ERRORS = (OperationalError, ConnectionError, TimeoutError)
+
 
 def _execute_sync(func, args, kwargs, bind_instance=None):
     if bind_instance is not None:
@@ -101,7 +105,7 @@ def adaptive_task(  # noqa: C901
                     original_func=func,
                 )
 
-            except (OperationalError, Exception) as exc:
+            except _BROKER_ERRORS as exc:
                 logger.warning("Broker unreachable for task '%s': %s", task_name, exc)
 
                 if resolved["fallback_sync"] and conf.SYNC_FALLBACK:
@@ -110,12 +114,9 @@ def adaptive_task(  # noqa: C901
                     )
                     return _execute_sync(func, args, kwargs, bind_instance)
 
-                if isinstance(exc, OperationalError):
-                    raise BrokerUnavailableError(
-                        f"Broker down for '{task_name}'."
-                    ) from exc
-
-                raise
+                raise BrokerUnavailableError(
+                    f"Broker unavailable for '{task_name}'."
+                ) from exc
 
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
