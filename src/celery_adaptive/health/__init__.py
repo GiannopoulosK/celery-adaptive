@@ -1,12 +1,15 @@
-from .checker import HealthChecker, HealthSnapshot
+"""Health monitoring: background checks feeding routing decisions."""
+
+from .checker import HealthMonitor, HealthSnapshot
 from .decisions import Action, Decision, DecisionEngine
-from .routing import route_task
+from .routing import decide, get_monitor
 
 __all__ = [
-    "HealthChecker",
-    "HealthSnapshot",
-    "Decision",
     "Action",
+    "Decision",
     "DecisionEngine",
-    "route_task",
+    "HealthMonitor",
+    "HealthSnapshot",
+    "decide",
+    "get_monitor",
 ]

@@ -1,110 +1,127 @@
 """
-Redis-backed batch buffer for celery-adaptive.
+Redis-backed batch buffer.
+
+Each batch task has a Redis list of JSON payloads and a watermark key
+holding the arrival time of the oldest buffered payload. All operations are
+Lua scripts, so they are atomic across processes, and every timestamp comes
+from the Redis server clock (``TIME``), so producers on different hosts
+agree on how old a batch is.
 """
+
+from __future__ import annotations
 
 import json
 import logging
-import time
+from typing import Any
 
-logger = logging.getLogger("celery_adaptive.batching.collector")
+logger = logging.getLogger(__name__)
 
-_KEY_PREFIX = "cadpb:"
-_WATERMARK_PREFIX = "cadpbw:"
+KEY_PREFIX = "cadpb:"
+WATERMARK_PREFIX = "cadpbw:"
 
-# Atomically claim up to ARGV[1] items from a list and trim them in one
-# operation.  Returns the claimed items.  Safe for multi-consumer use.
-_LUA_COLLECT = """
-local items = redis.call('LRANGE', KEYS[1], 0, ARGV[1] - 1)
+_NOW_MS = """
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+"""
+
+# KEYS: list, watermark. ARGV: payload. Returns {length, age_ms}.
+_LUA_ADD = (
+    _NOW_MS
+    + """
+redis.call('RPUSH', KEYS[1], ARGV[1])
+redis.call('SET', KEYS[2], now, 'NX')
+local length = redis.call('LLEN', KEYS[1])
+local watermark = tonumber(redis.call('GET', KEYS[2])) or now
+return {length, now - watermark}
+"""
+)
+
+# KEYS: list, watermark. ARGV: max items. Returns the claimed raw payloads.
+# The remaining items start a new wait window.
+_LUA_COLLECT = (
+    _NOW_MS
+    + """
+local items = redis.call('LRANGE', KEYS[1], 0, tonumber(ARGV[1]) - 1)
 if #items > 0 then
     redis.call('LTRIM', KEYS[1], #items, -1)
 end
+if redis.call('LLEN', KEYS[1]) == 0 then
+    redis.call('DEL', KEYS[2])
+elseif #items > 0 then
+    redis.call('SET', KEYS[2], now)
+end
 return items
 """
+)
+
+# KEYS: list, watermark. Returns age of the oldest item in ms, or -1.
+_LUA_AGE = (
+    _NOW_MS
+    + """
+local watermark = tonumber(redis.call('GET', KEYS[2]))
+if not watermark or redis.call('LLEN', KEYS[1]) == 0 then
+    return -1
+end
+return now - watermark
+"""
+)
+
+
+def _decode(value: Any) -> str:
+    return value.decode() if isinstance(value, bytes) else str(value)
 
 
 class BatchCollector:
-    """Accumulates payloads and signals flush thresholds."""
+    """Buffers payloads per task name and reports flush thresholds."""
 
-    def __init__(self, redis_client, max_batch_size: int = 100, max_wait_ms: int = 200):
+    def __init__(self, redis_client):
         self._r = redis_client
-        self.max_batch_size = max_batch_size
-        self.max_wait_ms = max_wait_ms
 
-    def add(self, task_name: str, payload: dict) -> bool:
-        """Append a payload and return True if a flush threshold is reached."""
-        list_key = f"{_KEY_PREFIX}{task_name}"
-        watermark_key = f"{_WATERMARK_PREFIX}{task_name}"
+    @staticmethod
+    def _keys(task_name: str) -> tuple[str, str]:
+        return f"{KEY_PREFIX}{task_name}", f"{WATERMARK_PREFIX}{task_name}"
 
-        self._r.rpush(list_key, json.dumps(payload, default=str))
+    def add(self, task_name: str, payload: dict) -> tuple[int, int]:
+        """Buffer ``payload``. Returns ``(buffered_count, oldest_age_ms)``."""
+        raw = json.dumps(payload, sort_keys=True)
+        length, age = self._r.eval(_LUA_ADD, 2, *self._keys(task_name), raw)
+        return int(length), int(age)
 
-        # SETNX preserves the original timestamp — only sets if absent,
-        # so the watermark always reflects when the *first* item arrived.
-        now_ms = int(time.monotonic() * 1000)
-        self._r.setnx(watermark_key, now_ms)
+    def collect(self, task_name: str, max_items: int) -> list[str]:
+        """Atomically remove and return up to ``max_items`` raw payloads."""
+        items = self._r.eval(_LUA_COLLECT, 2, *self._keys(task_name), max_items)
+        return [_decode(i) for i in items or []]
 
-        length = self._r.llen(list_key)
-
-        if length >= self.max_batch_size:
-            logger.debug(
-                "Batch size threshold reached for '%s': %d items.",
-                task_name,
-                length,
-            )
-            return True
-
-        watermark = self._r.get(watermark_key)
-        if watermark and (now_ms - int(watermark)) >= self.max_wait_ms:
-            logger.debug(
-                "Batch time threshold reached for '%s': %dms elapsed.",
-                task_name,
-                now_ms - int(watermark),
-            )
-            return True
-
-        return False
-
-    def collect(self, task_name: str, max_items: int | None = None) -> list[dict]:
-        """Atomically drain up to `max_items` payloads and adjust watermark."""
-        list_key = f"{_KEY_PREFIX}{task_name}"
-        watermark_key = f"{_WATERMARK_PREFIX}{task_name}"
-        count = max_items or self.max_batch_size
-
-        raw_items = self._r.eval(_LUA_COLLECT, 1, list_key, count)
+    def requeue(self, task_name: str, raw_items: list[str]) -> None:
+        """Put claimed payloads back at the head, preserving their order."""
         if not raw_items:
-            return []
+            return
+        list_key, watermark_key = self._keys(task_name)
+        with self._r.pipeline() as pipe:
+            pipe.lpush(list_key, *reversed(raw_items))
+            pipe.set(watermark_key, 0, nx=True)  # flush on the next check
+            pipe.execute()
 
-        remaining = self._r.llen(list_key)
-        if remaining == 0:
-            self._r.delete(watermark_key)
-        else:
-            # Shift watermark to now so remaining items start a new wait window
-            self._r.set(watermark_key, int(time.monotonic() * 1000))
+    def pending_count(self, task_name: str) -> int:
+        return int(self._r.llen(self._keys(task_name)[0]))
 
+    def oldest_age_ms(self, task_name: str) -> int | None:
+        age = int(self._r.eval(_LUA_AGE, 2, *self._keys(task_name)))
+        return None if age < 0 else age
+
+    def pending_task_names(self) -> list[str]:
+        """Names of all tasks with buffered payloads (non-blocking SCAN)."""
+        names = []
+        for key in self._r.scan_iter(match=f"{KEY_PREFIX}*", count=100):
+            names.append(_decode(key)[len(KEY_PREFIX) :])
+        return sorted(names)
+
+    @staticmethod
+    def decode(raw_items: list[str]) -> list[dict]:
         payloads = []
         for raw in raw_items:
             try:
                 payloads.append(json.loads(raw))
-            except json.JSONDecodeError:
-                logger.warning("BatchCollector: skipping malformed payload: %r", raw)
-
-        logger.debug("Collected %d item(s) for '%s'.", len(payloads), task_name)
+            except ValueError:
+                logger.error("Dropping malformed batch payload: %r", raw)
         return payloads
-
-    def pending_count(self, task_name: str) -> int:
-        """Return the number of items currently buffered for ``task_name``."""
-        return self._r.llen(f"{_KEY_PREFIX}{task_name}")
-
-    def all_pending_tasks(self) -> list[str]:
-        """Return all task names with buffered items using non-blocking SCAN."""
-        prefix = f"{_KEY_PREFIX}*"
-        prefix_len = len(_KEY_PREFIX)
-        tasks = []
-        cursor = 0
-        while True:
-            cursor, keys = self._r.scan(cursor, match=prefix, count=100)
-            for k in keys:
-                name = (k.decode() if isinstance(k, bytes) else k)[prefix_len:]
-                tasks.append(name)
-            if cursor == 0:
-                break
-        return tasks

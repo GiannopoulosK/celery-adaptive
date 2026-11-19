@@ -1,72 +1,54 @@
 """
-Health-aware task routing. Raises OperationalError for SYNC decisions.
+Process-wide health monitor used by :class:`~celery_adaptive.AdaptiveTask`.
 """
 
-import logging
-from collections.abc import Callable
-from typing import Any
+from __future__ import annotations
 
-from kombu.exceptions import OperationalError
+import logging
+import threading
 
 from ..conf import conf
-from ..metrics.exporters import record_routing_decision, record_sync_fallback
+from ..metrics.exporters import record_routing_decision
 from ..redis_client import get_redis_client
-from .decisions import Action
+from .checker import HealthMonitor
+from .decisions import Decision
 
-logger = logging.getLogger("django_smart_queue.health.routing")
+logger = logging.getLogger(__name__)
 
-_checker = None
-
-
-def _get_checker():
-    global _checker
-    if _checker is None:
-        from .checker import HealthChecker
-
-        # We safely try to get the HEALTH dict from our global settings
-        # If the user didn't provide a 'HEALTH' key, we pass an empty dict to checker
-        health_conf = getattr(conf, "HEALTH", {})
-        _checker = HealthChecker.from_conf(
-            health_conf=health_conf,
-            redis_client=get_redis_client(),
-        )
-    return _checker
+_monitor: HealthMonitor | None = None
+_lock = threading.Lock()
 
 
-def route_task(
-    *,
-    celery_task,
-    queue: str,
-    args: tuple,
-    kwargs: dict,
-    options: dict,
-    fallback_sync: bool,
-    original_func: Callable,
-) -> Any:
-    """Enqueue task with health-aware routing."""
-    checker = _get_checker()
-    decision = checker.decide(queue=queue)
+def get_monitor(app=None) -> HealthMonitor:
+    """Return the process-wide :class:`HealthMonitor`, creating it lazily."""
+    global _monitor
+    if _monitor is None:
+        with _lock:
+            if _monitor is None:
+                if app is None:
+                    from celery import current_app
 
-    # Record the routing decision for observability before acting on it.
+                    app = current_app._get_current_object()
+                _monitor = HealthMonitor.from_conf(
+                    app,
+                    conf.HEALTH,
+                    queue_map=conf.QUEUE_MAP,
+                    redis_client=get_redis_client(),
+                )
+    return _monitor
+
+
+def reset_monitor() -> None:
+    """Stop and forget the monitor. Called by setup() and in tests."""
+    global _monitor
+    with _lock:
+        if _monitor is not None:
+            _monitor.stop(timeout=1.0)
+        _monitor = None
+
+
+def decide(queue: str) -> Decision:
+    """Return the routing decision for a task headed to ``queue``."""
+    decision = get_monitor().decide(queue)
     record_routing_decision(decision.action.name, queue)
-
-    if conf.LOG_DECISIONS:
-        logger.info(
-            "Adaptive Decision: [%s] queue=%s reason=%s",
-            decision.action.name,
-            queue,
-            decision.reason,
-        )
-
-    if decision.action == Action.SYNC:
-        record_sync_fallback(celery_task.name, queue, "health_sync")
-        # Raising OperationalError triggers the try/except in decorators.py
-        raise OperationalError(f"Health-based sync fallback: {decision.reason}")
-
-    if decision.action == Action.DELAY:
-        options["countdown"] = decision.delay_seconds
-
-    if decision.action == Action.REROUTE:
-        queue = decision.target_queue or queue
-
-    return celery_task.apply_async(args=args, kwargs=kwargs, queue=queue, **options)
+    return decision

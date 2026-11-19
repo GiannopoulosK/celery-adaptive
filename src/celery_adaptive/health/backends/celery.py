@@ -1,31 +1,35 @@
 """
-Celery worker health backend for celery-adaptive.
+Celery worker health backend (``celery inspect``).
+
+Each check costs two broadcast round-trips bounded by ``INSPECT_TIMEOUT``,
+so it only runs when ``HEALTH["CELERY_INSPECT"]`` is enabled.
 """
+
+from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
 
-logger = logging.getLogger("celery_adaptive.health.celery")
-
-_INSPECT_TIMEOUT = 2.0  # seconds
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class WorkerStats:
     hostname: str
     active_tasks: int
-    scheduled_tasks: int
+    max_concurrency: int | None = None
 
     @property
-    def is_idle(self) -> bool:
-        return self.active_tasks == 0
+    def saturated(self) -> bool:
+        """True when every pool slot on this worker is busy."""
+        limit = self.max_concurrency
+        return limit is not None and limit > 0 and self.active_tasks >= limit
 
 
 @dataclass
 class CeleryHealthResult:
     healthy: bool
     workers: list[WorkerStats] = field(default_factory=list)
-    total_active: int = 0
     error: str | None = None
 
     @property
@@ -33,56 +37,50 @@ class CeleryHealthResult:
         return len(self.workers)
 
     @property
-    def overloaded(self) -> bool:
-        # Overloaded if we have workers but none have idle concurrency
-        return bool(self.workers) and all(w.active_tasks > 0 for w in self.workers)
+    def total_active(self) -> int:
+        return sum(w.active_tasks for w in self.workers)
+
+    @property
+    def saturated(self) -> bool:
+        """True when every responding worker has no free pool slot."""
+        return bool(self.workers) and all(w.saturated for w in self.workers)
 
 
 class CeleryHealthBackend:
-    """Checks Celery worker availability and backlog."""
+    """Checks that workers respond and how busy their pools are."""
 
-    def __init__(self, celery_app, destination: list[str] | None = None):
+    name = "celery"
+
+    def __init__(
+        self,
+        celery_app,
+        timeout: float = 1.0,
+        destination: list[str] | None = None,
+    ):
         self._app = celery_app
+        self._timeout = timeout
         self._destination = destination
 
     def check(self) -> CeleryHealthResult:
         try:
             inspect = self._app.control.inspect(
-                destination=self._destination, timeout=_INSPECT_TIMEOUT
+                destination=self._destination, timeout=self._timeout
             )
-            ping_result = inspect.ping() or {}
-
-            if not ping_result:
-                logger.warning("Celery health check: no workers responded to ping")
+            stats = inspect.stats() or {}
+            if not stats:
                 return CeleryHealthResult(
-                    healthy=False, error="No Celery workers responded to ping"
+                    healthy=False, error="No Celery workers responded"
                 )
-
-            active_map = inspect.active() or {}
-            scheduled_map = inspect.scheduled() or {}
-
+            active = inspect.active() or {}
             workers = [
                 WorkerStats(
                     hostname=hostname,
-                    active_tasks=len(active_map.get(hostname, [])),
-                    scheduled_tasks=len(scheduled_map.get(hostname, [])),
+                    active_tasks=len(active.get(hostname) or []),
+                    max_concurrency=(info.get("pool") or {}).get("max-concurrency"),
                 )
-                for hostname in ping_result
+                for hostname, info in stats.items()
             ]
-
-            total_active = sum(w.active_tasks for w in workers)
-
-            if total_active > 0:
-                logger.debug(
-                    "Celery: %d active task(s) across %d worker(s)",
-                    total_active,
-                    len(workers),
-                )
-
-            return CeleryHealthResult(
-                healthy=True, workers=workers, total_active=total_active
-            )
-
+            return CeleryHealthResult(healthy=True, workers=workers)
         except Exception as exc:
-            logger.error("Celery health check failed: %s", exc)
+            logger.warning("Celery health check failed: %s", exc)
             return CeleryHealthResult(healthy=False, error=str(exc))
