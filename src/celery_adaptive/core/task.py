@@ -333,19 +333,50 @@ class AdaptiveTask(Task):
 
     def _run_inline(self, call: _Dispatch) -> EagerResult:
         try:
-            return self.apply(
+            result = self.apply(
                 call.args,
                 call.kwargs,
                 task_id=call.task_id,
                 link=call.link,
                 link_error=call.link_error,
                 headers=call.options.get("headers"),
+                retries=call.options.get("retries"),
             )
         except BaseException:
             # With task_eager_propagates Celery re-raises before after_return,
             # so the dedup key would otherwise outlive the failed run.
             self._release_dedup(call)
             raise
+        self._continue_chain(call, result)
+        return result
+
+    def _continue_chain(self, call: _Dispatch, result: EagerResult) -> None:
+        """Dispatch the next chain step, as a worker would after success.
+
+        ``Task.apply`` ignores the ``chain`` option, so without this an inline
+        run would silently drop the rest of the chain.
+        """
+        chain = call.options.get("chain")
+        if not chain or not result.successful():
+            return
+        from celery import signature
+
+        next_step = signature(chain[-1], app=self._get_app())
+        next_step.apply_async(
+            (result.result,),
+            chain=chain[:-1] or None,
+            parent_id=call.task_id,
+            root_id=call.options.get("root_id") or call.task_id,
+        )
+
+    def _inline_blocker(self, call: _Dispatch) -> str | None:
+        """Reason this call must not run inline, or None if it may."""
+        options = call.options
+        if options.get("group_id") or options.get("chord"):
+            return "it is part of a group or chord, which cannot complete inline"
+        if options.get("countdown") or options.get("eta"):
+            return "it is scheduled for later (countdown/eta) and must not run early"
+        return None
 
     def _handle_unavailable(
         self, policy: DispatchPolicy, call: _Dispatch, *, reason: str
@@ -353,10 +384,17 @@ class AdaptiveTask(Task):
         self._on_fallback(policy.fallback, call)
 
         if policy.fallback == "sync":
-            logger.warning(
-                "Broker unavailable (%s); running '%s' inline.", reason, self.name
+            blocker = self._inline_blocker(call)
+            if blocker is None:
+                logger.warning(
+                    "Broker unavailable (%s); running '%s' inline.", reason, self.name
+                )
+                return self._run_inline(call)
+            self._release_dedup(call)
+            raise BrokerUnavailableError(
+                f"Broker unavailable for '{self.name}' ({reason}); not running it "
+                f"inline because {blocker}. Use FALLBACK='outbox' to keep it."
             )
-            return self._run_inline(call)
 
         if policy.fallback == "outbox":
             from . import outbox

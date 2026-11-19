@@ -31,6 +31,8 @@ from ..redis_client import get_redis_client
 logger = logging.getLogger(__name__)
 
 # Publish options worth preserving; everything else is connection-specific.
+# Canvas (chain, group, chord) and retry state must survive, or replay would
+# run a lone task and drop the rest of the workflow.
 _KEPT_OPTIONS = (
     "queue",
     "routing_key",
@@ -42,6 +44,16 @@ _KEPT_OPTIONS = (
     "link",
     "link_error",
     "shadow",
+    "chain",
+    "chord",
+    "group_id",
+    "group_index",
+    "root_id",
+    "parent_id",
+    "retries",
+    "time_limit",
+    "soft_time_limit",
+    "ignore_result",
 )
 
 

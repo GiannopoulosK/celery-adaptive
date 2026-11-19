@@ -128,6 +128,12 @@ arguments always propagate.
 | `"outbox"` | Stores the task in Redis and returns its `AsyncResult`. It is replayed with the **same task id** when the broker recovers, so the handle you returned to the client stays valid | Tasks are slow or must not run in the web process |
 | `"raise"` | Raises `BrokerUnavailableError` | The caller should decide |
 
+Both fallbacks keep workflows intact: an inline run continues the rest of its chain and
+keeps the retry count, and outbox entries keep chain, chord, group, retry and ETA options.
+Some calls cannot run inline correctly, so with `"sync"` they raise
+`BrokerUnavailableError` instead: group/chord members (the chord could never complete)
+and tasks with a `countdown`/`eta` (they would run early). Use `"outbox"` for those.
+
 The outbox is replayed automatically when the circuit closes (`OUTBOX_AUTO_REPLAY`), by
 the `celery_adaptive.replay_outbox` beat task, or with `celery-adaptive replay-outbox`.
 Replay is crash-safe (entries move through a processing list) and order-preserving. Use
@@ -335,6 +341,10 @@ Unknown keys and wrong types raise `ConfigurationError` at startup.
 
 - **`"sync"` runs tasks in your web process.** That is great for short tasks and dangerous
   for long ones. Prefer `"outbox"` for anything slow.
+- **Inline results are not stored in the result backend by default.** The caller gets an
+  `EagerResult`, but anyone polling `AsyncResult(task_id)` later (for example a client
+  you returned the id to) sees `PENDING`. Set Celery's `task_store_eager_result = True`
+  if ids from inline runs must be pollable.
 - **The outbox and dedup locks live in Redis.** If Redis is also your broker, an outage takes
   both down. Dedup fails open (the task runs); the outbox then raises.
 - **Health monitoring starts one daemon thread per process** when `HEALTH.ENABLED` is set.
