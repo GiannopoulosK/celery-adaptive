@@ -137,7 +137,7 @@ class AdaptiveTask(Task):
         if policy.priority is not None and "queue" not in options:
             options["queue"] = conf.QUEUE_MAP[policy.priority]
 
-        if policy.deduplicate and not conf.DISABLE_DEDUPLICATION:
+        if self._should_deduplicate(policy, options):
             holder = self._claim_dedup(call)
             if holder is not None:
                 logger.debug(
@@ -302,6 +302,18 @@ class AdaptiveTask(Task):
             options["queue"] = decision.target_queue
 
     # -- deduplication
+
+    @staticmethod
+    def _should_deduplicate(policy: DispatchPolicy, options: dict[str, Any]) -> bool:
+        if not policy.deduplicate or conf.DISABLE_DEDUPLICATION:
+            return False
+        # A retry is the same logical task, even if its key expired and was
+        # claimed by a newer call; suppressing it would strand it in RETRY.
+        if options.get("retries"):
+            return False
+        # Group/chord results track each member's own id, so returning another
+        # task's handle would leave the group (or chord body) waiting forever.
+        return not (options.get("group_id") or options.get("chord"))
 
     def _claim_dedup(self, call: _Dispatch) -> str | None:
         """Claim the dedup key; return the holder's task id for duplicates."""

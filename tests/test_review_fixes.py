@@ -211,3 +211,32 @@ def test_outbox_keeps_retry_count(celery_app, redis, broker_down):
     entry = loads(redis.lindex("cadp:outbox", 0))
     assert entry["options"]["retries"] == 3
     assert "eta" in entry["options"]
+
+
+# --- deduplication edge cases ----------------------------------------------
+
+
+def test_group_members_are_not_deduplicated(configured, celery_app):
+    from celery import group
+
+    from .conftest import running_worker
+
+    @adaptive_task(deduplicate=True)
+    def square(x):
+        return x * x
+
+    with running_worker(celery_app):
+        assert group(square.s(3), square.s(3)).apply_async().get(timeout=10) == [9, 9]
+
+
+def test_retry_is_published_even_if_key_was_reclaimed(configured, celery_app):
+    from celery_adaptive.core.idempotency import make_dedup_key
+
+    @adaptive_task(deduplicate=True)
+    def job(x):
+        pass
+
+    # The original task's key expired and a newer identical call claimed it.
+    configured.set(make_dedup_key(job.name, (1,), {}), "newer-task")
+    job.apply_async((1,), task_id="original-task", retries=1)
+    assert queue_depth(celery_app, "celery") == 1
