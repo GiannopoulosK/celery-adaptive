@@ -89,6 +89,15 @@ class CircuitBreaker:
             self._report()
         return recovered
 
+    def release_probe(self) -> None:
+        """Give back a half-open probe slot without recording an outcome.
+
+        Used when a publish attempt failed for reasons unrelated to broker
+        connectivity (e.g. a serialization error), so the next call can probe.
+        """
+        with self._lock:
+            self._probe_in_flight = False
+
     def record_failure(self) -> None:
         with self._lock:
             self._failures += 1

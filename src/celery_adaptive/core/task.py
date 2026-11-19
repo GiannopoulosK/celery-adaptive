@@ -155,31 +155,7 @@ class AdaptiveTask(Task):
         if conf.HEALTH.get("ENABLED"):
             self._apply_health_routing(options)
 
-        options.setdefault("retry_policy", DEFAULT_PUBLISH_RETRY_POLICY)
-        breaker = get_breaker(self._broker_key())
-
-        if not breaker.allow():
-            return self._handle_unavailable(policy, call, reason="circuit open")
-
-        try:
-            result = super().apply_async(
-                call.args,
-                call.kwargs,
-                task_id=call.task_id,
-                producer=producer,
-                link=link,
-                link_error=link_error,
-                **options,
-            )
-        except BROKER_ERRORS as exc:
-            breaker.record_failure()
-            logger.warning("Publishing '%s' failed: %s", self.name, exc)
-            return self._handle_unavailable(policy, call, reason=str(exc))
-
-        if breaker.record_success():
-            self._on_broker_recovered()
-        self._on_published(options)
-        return result
+        return self._publish(policy, call, producer)
 
     async def aapply_async(self, args=None, kwargs=None, **options):
         """
@@ -196,6 +172,42 @@ class AdaptiveTask(Task):
     async def adelay(self, *args, **kwargs):
         """Async counterpart of :meth:`delay`: ``await task.adelay(1, 2)``."""
         return await self.aapply_async(args, kwargs)
+
+    def _publish(self, policy: DispatchPolicy, call: _Dispatch, producer):
+        """Publish through the circuit breaker, falling back on outages."""
+        options = call.options
+        options.setdefault("retry_policy", DEFAULT_PUBLISH_RETRY_POLICY)
+        breaker = get_breaker(self._broker_key())
+
+        if not breaker.allow():
+            return self._handle_unavailable(policy, call, reason="circuit open")
+
+        try:
+            result = super().apply_async(
+                call.args,
+                call.kwargs,
+                task_id=call.task_id,
+                producer=producer,
+                link=call.link,
+                link_error=call.link_error,
+                **options,
+            )
+        except BROKER_ERRORS as exc:
+            breaker.record_failure()
+            logger.warning("Publishing '%s' failed: %s", self.name, exc)
+            return self._handle_unavailable(policy, call, reason=str(exc))
+        except BaseException:
+            # Not a connectivity problem (serialization, routing, a bug): the
+            # broker's health is unknown, so free the probe slot, and nothing
+            # was published, so free the dedup key.
+            breaker.release_probe()
+            self._release_dedup(call)
+            raise
+
+        if breaker.record_success():
+            self._on_broker_recovered()
+        self._on_published(options)
+        return result
 
     def after_return(self, status, retval, task_id, args, kwargs, einfo):
         """Release the deduplication key once the task reaches a final state.
@@ -302,14 +314,20 @@ class AdaptiveTask(Task):
     # -- fallbacks
 
     def _run_inline(self, call: _Dispatch) -> EagerResult:
-        return self.apply(
-            call.args,
-            call.kwargs,
-            task_id=call.task_id,
-            link=call.link,
-            link_error=call.link_error,
-            headers=call.options.get("headers"),
-        )
+        try:
+            return self.apply(
+                call.args,
+                call.kwargs,
+                task_id=call.task_id,
+                link=call.link,
+                link_error=call.link_error,
+                headers=call.options.get("headers"),
+            )
+        except BaseException:
+            # With task_eager_propagates Celery re-raises before after_return,
+            # so the dedup key would otherwise outlive the failed run.
+            self._release_dedup(call)
+            raise
 
     def _handle_unavailable(
         self, policy: DispatchPolicy, call: _Dispatch, *, reason: str
