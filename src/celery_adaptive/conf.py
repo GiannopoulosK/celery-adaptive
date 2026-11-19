@@ -39,6 +39,8 @@ DEFAULTS: dict[str, Any] = {
     "FORCE_SYNC": False,
     "BROKER_TIMEOUT": 1.0,
     "LOG_DECISIONS": False,
+    "CIRCUIT_BREAKER_THRESHOLD": 3,
+    "CIRCUIT_BREAKER_RESET": 30.0,
     "QUEUE_MAP": {
         "high": "high_priority",
         "default": "default",
@@ -62,6 +64,8 @@ EXPECTED_TYPES: dict[str, type | tuple[type, ...]] = {
     "FORCE_SYNC": bool,
     "BROKER_TIMEOUT": (int, float),
     "LOG_DECISIONS": bool,
+    "CIRCUIT_BREAKER_THRESHOLD": int,
+    "CIRCUIT_BREAKER_RESET": (int, float),
     "QUEUE_MAP": dict,
     "RETRY_MAX_ATTEMPTS": int,
     "RETRY_BASE_DELAY": (int, float),
@@ -119,6 +123,8 @@ def validate(user_settings: dict) -> dict[str, Any]:
     for name, value in (
         ("DEDUPLICATION_TTL", merged["DEDUPLICATION_TTL"]),
         ("BROKER_TIMEOUT", merged["BROKER_TIMEOUT"]),
+        ("CIRCUIT_BREAKER_THRESHOLD", merged["CIRCUIT_BREAKER_THRESHOLD"]),
+        ("CIRCUIT_BREAKER_RESET", merged["CIRCUIT_BREAKER_RESET"]),
     ):
         if value <= 0:
             raise ConfigurationError(f"{PREFIX} {name} must be positive.")

@@ -9,6 +9,7 @@ Django users: use celery_adaptive.contrib.django instead.
 """
 
 from .conf import conf as settings
+from .core.circuit import reset_breakers
 from .core.decorators import adaptive_task
 from .exceptions import (
     BrokerUnavailableError,
@@ -43,6 +44,7 @@ def setup(
     Calling ``setup()`` again replaces the previous configuration.
     """
     settings.configure(config or {})
+    reset_breakers()
 
     if redis_client is not None:
         set_redis_client(redis_client)

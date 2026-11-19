@@ -4,6 +4,7 @@ from celery import Celery
 
 import celery_adaptive
 from celery_adaptive.conf import conf
+from celery_adaptive.core.circuit import reset_breakers
 from celery_adaptive.redis_client import reset_redis_client
 
 
@@ -33,6 +34,8 @@ def configured(celery_app, redis):
 def _reset_state():
     conf.reset()
     reset_redis_client()
+    reset_breakers()
     yield
     conf.reset()
     reset_redis_client()
+    reset_breakers()
