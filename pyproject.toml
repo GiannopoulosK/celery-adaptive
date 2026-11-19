@@ -102,3 +102,10 @@ line-ending = "auto"
 python_files = "test_*.py"
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "integration: needs real Redis/RabbitMQ (set CELERY_ADAPTIVE_TEST_*_URL)",
+]
+filterwarnings = [
+    # Third-party deprecation emitted by FastAPI's TestClient import.
+    "ignore:Using `httpx` with `starlette.testclient`:DeprecationWarning",
+]
