@@ -47,6 +47,7 @@ def acquire_dedup_lock(
         if not acquired:
             logger.debug("Dedup hit — skipping task '%s'.", task_name)
             return False
+        return True
     except Exception as exc:
         logger.warning("Dedup Redis error for '%s', failing open: %s", task_name, exc)
         return True  # Fail open: run task rather than drop it
