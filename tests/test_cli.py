@@ -15,9 +15,13 @@ APP = "tests.fixtures.cli_app:app"
 
 @pytest.fixture
 def cli_app(configured):
+    from celery import _state
+
     from tests.fixtures.cli_app import app
 
-    return app
+    yield app
+    # Keep later tests' shared tasks from registering on this module-level app.
+    _state._deregister_app(app)
 
 
 def test_load_app_by_module_and_attribute(cli_app):
