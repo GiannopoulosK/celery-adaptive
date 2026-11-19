@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import os
 import threading
 import time
 import uuid
@@ -215,6 +216,16 @@ def _replay_locked(app, redis_client, key, lock_key, token, limit) -> int:
 
 
 _replay_lock = threading.Lock()
+
+
+def _reinit_lock_after_fork() -> None:
+    # The replay thread does not survive a fork; its lock must not either.
+    global _replay_lock
+    _replay_lock = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reinit_lock_after_fork)
 
 
 def replay_in_background(app) -> threading.Thread | None:

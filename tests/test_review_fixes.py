@@ -322,3 +322,29 @@ def test_poison_entries_are_dead_lettered(outbox_redis, celery_app, monkeypatch)
     assert sent == ["good"]
     assert outbox.dead_letters(outbox_redis) == 2
     assert outbox.pending(outbox_redis) == 0
+
+
+# --- fork safety -------------------------------------------------------------
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "fork"), reason="needs fork()")
+def test_breaker_usable_in_child_forked_while_lock_held():
+    import os
+    import signal
+
+    breaker = get_breaker("amqp://fork-test//")
+    breaker._lock.acquire()  # another thread is mid-trip() when we fork
+    try:
+        pid = os.fork()
+        if pid == 0:  # child
+            signal.alarm(2)  # deadlock -> SIGALRM -> non-zero exit
+            try:
+                breaker.allow()
+                breaker.trip()
+                os._exit(0)
+            except BaseException:
+                os._exit(1)
+    finally:
+        breaker._lock.release()
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0

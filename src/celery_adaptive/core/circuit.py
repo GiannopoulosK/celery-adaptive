@@ -16,6 +16,7 @@ timeout on every task:
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -165,3 +166,16 @@ def reset_breakers() -> None:
     """Forget all breakers. Called by setup() and in tests."""
     with _registry_lock:
         _breakers.clear()
+
+
+def _reinit_locks_after_fork() -> None:
+    # A lock held by another thread (e.g. the health monitor tripping a
+    # breaker) at fork time would stay locked forever in the child.
+    global _registry_lock
+    _registry_lock = threading.Lock()
+    for breaker in _breakers.values():
+        breaker._lock = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reinit_locks_after_fork)

@@ -9,6 +9,7 @@ created lazily from the ``REDIS_URL`` setting on first use.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from typing import Any
 
@@ -16,6 +17,15 @@ logger = logging.getLogger(__name__)
 
 _redis_client: Any | None = None
 _lock = threading.Lock()
+
+
+def _reinit_lock_after_fork() -> None:
+    global _lock
+    _lock = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reinit_lock_after_fork)
 
 
 def set_redis_client(client: Any) -> None:
