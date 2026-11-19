@@ -24,3 +24,32 @@ def test_get_latest_metrics_without_prometheus(monkeypatch):
 
     monkeypatch.setattr(prometheus, "_PROMETHEUS_AVAILABLE", False)
     assert prometheus.get_latest_metrics()[0] == b""
+
+
+def test_health_sync_decision_raises_operational_error(configured, monkeypatch):
+    """A SYNC decision must surface as OperationalError, not a TypeError."""
+    import pytest
+    from kombu.exceptions import OperationalError
+
+    from celery_adaptive.health import routing
+    from celery_adaptive.health.decisions import Action, Decision
+
+    class StubChecker:
+        def decide(self, queue):
+            return Decision(Action.SYNC, "broker down")
+
+    monkeypatch.setattr(routing, "_checker", StubChecker())
+
+    class StubTask:
+        name = "t"
+
+    with pytest.raises(OperationalError):
+        routing.route_task(
+            celery_task=StubTask(),
+            queue="default",
+            args=(),
+            kwargs={},
+            options={},
+            fallback_sync=True,
+            original_func=lambda: None,
+        )

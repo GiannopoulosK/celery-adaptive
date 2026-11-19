@@ -59,7 +59,7 @@ def route_task(
         )
 
     if decision.action == Action.SYNC:
-        record_sync_fallback(celery_task.name, queue, "health_sync")
+        record_sync_fallback(celery_task.name, "health_sync")
         # Raising OperationalError triggers the try/except in decorators.py
         raise OperationalError(f"Health-based sync fallback: {decision.reason}")
 
