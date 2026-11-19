@@ -10,6 +10,7 @@ Django users: use celery_adaptive.contrib.django instead.
 
 from .batching import batch_task
 from .conf import conf as settings
+from .core.broker import tune_broker_timeouts
 from .core.circuit import reset_breakers
 from .core.decorators import adaptive_task
 from .core.task import AdaptiveTask
@@ -26,6 +27,7 @@ __all__ = [
     "adaptive_task",
     "batch_task",
     "beat_schedule",
+    "tune_broker_timeouts",
     "AdaptiveTask",
     "CeleryAdaptiveError",
     "ConfigurationError",

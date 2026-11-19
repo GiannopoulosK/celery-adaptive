@@ -1,36 +1,21 @@
-"""
-Django settings bridge for celery-adaptive.
-
-Reads ``settings.CELERY_ADAPTIVE`` (a dict) and calls
-``celery_adaptive.setup(config=...)`` so application code never has to.
-
-Place this in INSTALLED_APPS via the AppConfig, not directly.
-"""
+"""Django settings bridge: ``settings.CELERY_ADAPTIVE`` -> ``setup()``."""
 
 from django.conf import settings
 
 
 def configure_from_django_settings() -> None:
     """
-    Read CELERY_ADAPTIVE from Django settings and configure celery_adaptive.
+    Configure celery-adaptive from ``settings.CELERY_ADAPTIVE``.
 
-    Raises ConfigurationError on invalid settings (propagates to startup).
+    Invalid settings raise ConfigurationError at startup. Example::
 
-    Example settings.py:
         CELERY_ADAPTIVE = {
-            "DEDUPLICATION_TTL": 600,
-            "QUEUE_MAP": {
-                "high": "critical",
-                "default": "default",
-                "low": "bulk",
-            },
-            "HEALTH": {
-                "RABBITMQ_URL": "http://localhost:15672",
-                "WATCHED_QUEUES": ["default", "critical"],
-            },
+            "REDIS_URL": "redis://localhost:6379/1",
+            "FALLBACK": "outbox",
+            "QUEUE_MAP": {"high": "critical", "default": "default", "low": "bulk"},
+            "HEALTH": {"ENABLED": True, "REROUTE": {"default": "overflow"}},
         }
     """
     import celery_adaptive
 
-    user_conf = getattr(settings, "CELERY_ADAPTIVE", {})
-    celery_adaptive.setup(config=user_conf)
+    celery_adaptive.setup(config=getattr(settings, "CELERY_ADAPTIVE", {}))
