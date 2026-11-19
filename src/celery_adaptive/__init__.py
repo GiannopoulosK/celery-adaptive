@@ -8,6 +8,7 @@ Quickstart:
 Django users: use celery_adaptive.contrib.django instead.
 """
 
+from .batching import batch_task
 from .conf import conf as settings
 from .core.circuit import reset_breakers
 from .core.decorators import adaptive_task
@@ -23,6 +24,8 @@ __all__ = [
     "setup",
     "settings",
     "adaptive_task",
+    "batch_task",
+    "beat_schedule",
     "AdaptiveTask",
     "CeleryAdaptiveError",
     "ConfigurationError",
@@ -63,6 +66,28 @@ def setup(
         from .core.broker import tune_broker_timeouts
 
         tune_broker_timeouts(app)
+
+
+def beat_schedule(
+    *, flush_batches_every: float = 1.0, replay_outbox_every: float = 30.0
+) -> dict:
+    """
+    Celery beat entries for the maintenance tasks in ``celery_adaptive.tasks``.
+
+    Usage::
+
+        app.conf.beat_schedule.update(celery_adaptive.beat_schedule())
+    """
+    return {
+        "celery-adaptive-flush-batches": {
+            "task": "celery_adaptive.flush_batches",
+            "schedule": flush_batches_every,
+        },
+        "celery-adaptive-replay-outbox": {
+            "task": "celery_adaptive.replay_outbox",
+            "schedule": replay_outbox_every,
+        },
+    }
 
 
 def __getattr__(name):
