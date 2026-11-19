@@ -43,6 +43,11 @@ if _PROMETHEUS_AVAILABLE:
         "Total tasks successfully enqueued",
         ["task_name", "queue"],
     )
+    DEDUP_HITS = Counter(
+        "celery_adaptive_dedup_hits_total",
+        "Dispatches suppressed by deduplication",
+        ["task_name"],
+    )
     SYNC_FALLBACKS = Counter(
         "celery_adaptive_sync_fallbacks_total",
         "Tasks that bypassed the broker due to health issues",
@@ -77,7 +82,7 @@ if _PROMETHEUS_AVAILABLE:
     )
 
 else:
-    TASKS_ENQUEUED = SYNC_FALLBACKS = BATCH_SIZE = BATCH_FLUSHES = _NOOP
+    TASKS_ENQUEUED = SYNC_FALLBACKS = DEDUP_HITS = BATCH_SIZE = BATCH_FLUSHES = _NOOP
     REDIS_LATENCY = RABBITMQ_DEPTH = CELERY_ACTIVE = ROUTING_DECISIONS = _NOOP
 
 
@@ -101,6 +106,8 @@ def update_health_metrics(snapshot) -> None:
             CELERY_ACTIVE.labels(worker=w.hostname).set(w.active_tasks)
 
 
-def get_latest_metrics():
-    """Generates the latest metrics buffer and content type."""
+def get_latest_metrics() -> tuple[bytes, str]:
+    """Return the latest metrics payload and its content type."""
+    if not _PROMETHEUS_AVAILABLE:
+        return b"", "text/plain; charset=utf-8"
     return generate_latest(), CONTENT_TYPE_LATEST

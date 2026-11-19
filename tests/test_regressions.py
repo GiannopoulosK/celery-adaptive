@@ -8,3 +8,19 @@ def test_dedup_lock_allows_first_call_and_blocks_duplicate(configured):
     assert acquire_dedup_lock(redis, "t", (1, 2), {}) is True
     assert acquire_dedup_lock(redis, "t", (1, 2), {}) is False
     assert acquire_dedup_lock(redis, "t", (3, 4), {}) is True
+
+
+def test_metrics_package_is_importable():
+    import celery_adaptive.metrics as metrics
+
+    metrics.record_dedup_hit("t")
+    payload, content_type = metrics.get_latest_metrics()
+    assert b"celery_adaptive_dedup_hits_total" in payload
+    assert content_type.startswith("text/plain")
+
+
+def test_get_latest_metrics_without_prometheus(monkeypatch):
+    from celery_adaptive.metrics import prometheus
+
+    monkeypatch.setattr(prometheus, "_PROMETHEUS_AVAILABLE", False)
+    assert prometheus.get_latest_metrics()[0] == b""

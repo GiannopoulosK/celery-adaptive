@@ -5,6 +5,7 @@ Metric recording hooks used throughout the library.
 from .prometheus import (
     BATCH_FLUSHES,
     BATCH_SIZE,
+    DEDUP_HITS,
     ROUTING_DECISIONS,
     SYNC_FALLBACKS,
     TASKS_ENQUEUED,
@@ -13,6 +14,10 @@ from .prometheus import (
 
 def record_enqueue(task_name: str, queue: str) -> None:
     TASKS_ENQUEUED.labels(task_name=task_name, queue=queue).inc()
+
+
+def record_dedup_hit(task_name: str) -> None:
+    DEDUP_HITS.labels(task_name=task_name).inc()
 
 
 def record_sync_fallback(task_name: str, reason: str) -> None:
