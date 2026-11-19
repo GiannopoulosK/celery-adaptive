@@ -1,9 +1,12 @@
+import contextlib
+
 import fakeredis
 import pytest
 from celery import (
     Celery,
     _state as celery_state,
 )
+from celery.contrib.testing.worker import start_worker
 from kombu.transport import memory
 
 import celery_adaptive
@@ -34,6 +37,13 @@ def celery_app():
     celery_state._on_app_finalizers.update(finalizers)
     celery_state._deregister_app(app)
     memory.Channel.queues.clear()
+
+
+@contextlib.contextmanager
+def running_worker(app):
+    """Run a real worker thread for ``app`` for the duration of the block."""
+    with start_worker(app, perform_ping_check=False, loglevel="WARNING") as worker:
+        yield worker
 
 
 def queue_depth(app, queue: str) -> int:

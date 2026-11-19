@@ -25,7 +25,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from celery import Task
+from celery import Task, states
 from celery.result import AsyncResult, EagerResult
 from celery.utils import uuid
 from kombu.exceptions import OperationalError
@@ -35,6 +35,7 @@ from ..conf import conf
 from ..exceptions import BrokerUnavailableError, ConfigurationError
 from ..redis_client import get_redis_client
 from .circuit import get_breaker
+from .idempotency import DEDUP_HEADER, DedupKeyFunc, acquire, make_dedup_key, release
 
 logger = logging.getLogger(__name__)
 
@@ -67,14 +68,26 @@ class DispatchPolicy:
     fallback_sync: bool
 
 
+def _request_header(request, name: str) -> Any:
+    # Workers expose custom headers as request attributes; eager apply()
+    # only keeps them in request.headers.
+    value = getattr(request, name, None)
+    if value is None:
+        value = (getattr(request, "headers", None) or {}).get(name)
+    return value
+
+
 class AdaptiveTask(Task):
     """Celery task base class with adaptive, failure-aware dispatch."""
 
     #: Key into the ``QUEUE_MAP`` setting. ``None`` leaves queue selection
     #: to Celery (``queue=`` option, ``task_routes`` or the default queue).
     adaptive_priority: str | None = None
-    #: Suppress duplicate dispatches with identical arguments.
+    #: Suppress duplicate dispatches while an identical task is in flight.
     adaptive_deduplicate: bool = False
+    #: Optional ``f(*args, **kwargs) -> value`` choosing which arguments
+    #: identify a duplicate. Defaults to all of them.
+    adaptive_dedup_key: DedupKeyFunc | None = None
     #: Run inline when the broker is unreachable. ``None`` uses the
     #: ``SYNC_FALLBACK`` setting.
     adaptive_fallback_sync: bool | None = None
@@ -100,16 +113,25 @@ class AdaptiveTask(Task):
         if policy.priority is not None and "queue" not in options:
             options["queue"] = conf.QUEUE_MAP[policy.priority]
 
+        dedup_key = None
+        if policy.deduplicate and not conf.DISABLE_DEDUPLICATION:
+            dedup_key, holder = self._claim_dedup(args, kwargs, task_id)
+            if holder is not None:
+                logger.debug(
+                    "Duplicate '%s' suppressed; returning in-flight task %s.",
+                    self.name,
+                    holder,
+                )
+                return self.AsyncResult(holder)
+            if dedup_key is not None:
+                options["headers"] = {
+                    **(options.get("headers") or {}),
+                    DEDUP_HEADER: dedup_key,
+                }
+
         if conf.FORCE_SYNC:
             logger.debug("FORCE_SYNC: running '%s' inline.", self.name)
-            return self._run_inline(args, kwargs, task_id, link, link_error)
-
-        if (
-            policy.deduplicate
-            and not conf.DISABLE_DEDUPLICATION
-            and not self._acquire_dedup(args, kwargs)
-        ):
-            return None
+            return self._run_inline(args, kwargs, task_id, link, link_error, options)
 
         if conf.HEALTH.get("ENABLED"):
             self._apply_health_routing(options, args, kwargs)
@@ -119,7 +141,14 @@ class AdaptiveTask(Task):
 
         if not breaker.allow():
             return self._handle_unavailable(
-                policy, args, kwargs, task_id, link, link_error, reason="circuit open"
+                policy,
+                args,
+                kwargs,
+                task_id,
+                link,
+                link_error,
+                options,
+                reason="circuit open",
             )
 
         try:
@@ -137,11 +166,32 @@ class AdaptiveTask(Task):
             breaker.record_failure()
             logger.warning("Publishing '%s' failed: %s", self.name, exc)
             return self._handle_unavailable(
-                policy, args, kwargs, task_id, link, link_error, reason=str(exc)
+                policy,
+                args,
+                kwargs,
+                task_id,
+                link,
+                link_error,
+                options,
+                reason=str(exc),
             )
 
         breaker.record_success()
         return result
+
+    def after_return(self, status, retval, task_id, args, kwargs, einfo):
+        """Release the deduplication key once the task reaches a final state.
+
+        Subclasses overriding this must call ``super().after_return(...)``.
+        """
+        super().after_return(status, retval, task_id, args, kwargs, einfo)
+        if status not in states.READY_STATES:
+            return
+        key = _request_header(self.request, DEDUP_HEADER)
+        if key:
+            redis = get_redis_client()
+            if redis is not None:
+                release(redis, key, task_id)
 
     # ------------------------------------------------------------ internals
 
@@ -198,29 +248,45 @@ class AdaptiveTask(Task):
         if decision.should_reroute and decision.target_queue:
             options["queue"] = decision.target_queue
 
-    def _acquire_dedup(self, args, kwargs) -> bool:
+    def _claim_dedup(self, args, kwargs, task_id) -> tuple[str | None, str | None]:
+        """Return ``(key, holder)``; ``holder`` is set when this is a duplicate."""
         redis = get_redis_client()
         if redis is None:
             logger.warning(
                 "No Redis client configured; deduplication skipped for '%s'.",
                 self.name,
             )
-            return True
-        from .idempotency import acquire_dedup_lock
+            return None, None
+        # Read from the class so a plain function isn't bound as a method.
+        key_func = type(self).adaptive_dedup_key
+        key = make_dedup_key(self.name, args, kwargs, key_func)
+        return key, acquire(redis, key, task_id)
 
-        return acquire_dedup_lock(redis, self.name, args, kwargs)
+    def _release_dedup(self, options, task_id) -> None:
+        key = (options.get("headers") or {}).get(DEDUP_HEADER)
+        redis = get_redis_client()
+        if key and redis is not None:
+            release(redis, key, task_id)
 
-    def _run_inline(self, args, kwargs, task_id, link, link_error) -> EagerResult:
+    def _run_inline(
+        self, args, kwargs, task_id, link, link_error, options
+    ) -> EagerResult:
         return self.apply(
-            args, kwargs, task_id=task_id, link=link, link_error=link_error
+            args,
+            kwargs,
+            task_id=task_id,
+            link=link,
+            link_error=link_error,
+            headers=options.get("headers"),
         )
 
     def _handle_unavailable(
-        self, policy, args, kwargs, task_id, link, link_error, *, reason: str
+        self, policy, args, kwargs, task_id, link, link_error, options, *, reason
     ) -> AsyncResult | EagerResult:
         if policy.fallback_sync:
             logger.warning(
                 "Broker unavailable (%s); running '%s' inline.", reason, self.name
             )
-            return self._run_inline(args, kwargs, task_id, link, link_error)
+            return self._run_inline(args, kwargs, task_id, link, link_error, options)
+        self._release_dedup(options, task_id)
         raise BrokerUnavailableError(f"Broker unavailable for '{self.name}': {reason}")

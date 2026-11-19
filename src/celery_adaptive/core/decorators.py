@@ -15,6 +15,7 @@ def adaptive_task(
     *,
     priority: str | None = None,
     deduplicate: bool = False,
+    dedup_key: Callable[..., Any] | None = None,
     fallback_sync: bool | None = None,
     app=None,
     base: type[AdaptiveTask] = AdaptiveTask,
@@ -34,7 +35,10 @@ def adaptive_task(
     Args:
         priority: Key into the ``QUEUE_MAP`` setting (``"high"``,
             ``"default"``, ``"low"``). ``None`` leaves routing to Celery.
-        deduplicate: Suppress duplicate dispatches with identical arguments.
+        deduplicate: While a task with identical arguments is in flight,
+            return its result handle instead of publishing again.
+        dedup_key: ``f(*args, **kwargs)`` returning the value that
+            identifies duplicates, e.g. ``lambda order_id, **_: order_id``.
         fallback_sync: Run inline when the broker is unreachable. ``None``
             uses the ``SYNC_FALLBACK`` setting.
         app: Register on this Celery app. Defaults to ``shared_task`` so the
@@ -54,6 +58,7 @@ def adaptive_task(
         "base": base,
         "adaptive_priority": priority,
         "adaptive_deduplicate": deduplicate,
+        "adaptive_dedup_key": staticmethod(dedup_key) if dedup_key else None,
         "adaptive_fallback_sync": fallback_sync,
         **celery_options,
     }
