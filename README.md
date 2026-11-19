@@ -136,7 +136,10 @@ and tasks with a `countdown`/`eta` (they would run early). Use `"outbox"` for th
 
 The outbox is replayed automatically when the circuit closes (`OUTBOX_AUTO_REPLAY`), by
 the `celery_adaptive.replay_outbox` beat task, or with `celery-adaptive replay-outbox`.
-Replay is crash-safe (entries move through a processing list) and order-preserving. Use
+Only one replayer runs at a time across all processes (a Redis lock), entries move
+through a processing list so a crash never loses them, and order is preserved. Entries
+that fail for reasons other than the broker (e.g. an unknown task name) go to the
+`cadp:outbox:dead` list instead of blocking the rest; the health report counts them. Use
 a Redis that is **not** your broker for the outbox, or both will go down together.
 
 ### Deduplication of in-flight tasks

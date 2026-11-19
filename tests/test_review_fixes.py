@@ -240,3 +240,85 @@ def test_retry_is_published_even_if_key_was_reclaimed(configured, celery_app):
     configured.set(make_dedup_key(job.name, (1,), {}), "newer-task")
     job.apply_async((1,), task_id="original-task", retries=1)
     assert queue_depth(celery_app, "celery") == 1
+
+
+# --- outbox replay -----------------------------------------------------------
+
+
+@pytest.fixture
+def outbox_redis(celery_app, redis):
+    celery_adaptive.setup(
+        config={"FALLBACK": "outbox", "OUTBOX_AUTO_REPLAY": False},
+        redis_client=redis,
+    )
+    return redis
+
+
+def test_concurrent_replays_never_publish_twice(outbox_redis, celery_app, monkeypatch):
+    import threading
+    import time
+    from collections import Counter
+
+    from celery_adaptive.core import outbox
+
+    sent = Counter()
+
+    def slow_send(name, **kw):
+        time.sleep(0.02)
+        sent[kw["task_id"]] += 1
+
+    monkeypatch.setattr(celery_app, "send_task", slow_send)
+    for i in range(10):
+        outbox.store("t", f"id-{i}", (), {}, {})
+
+    threads = [
+        threading.Thread(target=outbox.replay, args=(celery_app,)) for _ in range(4)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    while outbox.pending(outbox_redis):  # a loser may have skipped; finish up
+        outbox.replay(celery_app)
+
+    assert set(sent) == {f"id-{i}" for i in range(10)}
+    assert max(sent.values()) == 1
+
+
+def test_replay_skips_while_another_replayer_holds_the_lock(outbox_redis, celery_app):
+    from celery_adaptive.core import outbox
+
+    outbox.store("t", "id-0", (), {}, {})
+    outbox_redis.set("cadp:outbox:lock", "someone-else")
+    assert outbox.replay(celery_app) == 0
+    assert outbox.pending(outbox_redis) == 1
+
+
+def test_lock_released_after_replay(outbox_redis, celery_app, monkeypatch):
+    from celery_adaptive.core import outbox
+
+    monkeypatch.setattr(celery_app, "send_task", lambda name, **kw: None)
+    outbox.store("t", "id-0", (), {}, {})
+    outbox.replay(celery_app)
+    assert outbox_redis.get("cadp:outbox:lock") is None
+
+
+def test_poison_entries_are_dead_lettered(outbox_redis, celery_app, monkeypatch):
+    from celery_adaptive.core import outbox
+
+    sent = []
+
+    def send(name, **kw):
+        if name == "poison":
+            raise KeyError("bad options")
+        sent.append(kw["task_id"])
+
+    monkeypatch.setattr(celery_app, "send_task", send)
+    outbox.store("poison", "bad", (), {}, {})
+    outbox_redis.rpush("cadp:outbox", "not json")
+    outbox.store("t", "good", (), {}, {})
+
+    assert outbox.replay(celery_app) == 1
+    assert sent == ["good"]
+    assert outbox.dead_letters(outbox_redis) == 2
+    assert outbox.pending(outbox_redis) == 0

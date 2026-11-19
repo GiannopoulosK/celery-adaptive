@@ -21,6 +21,7 @@ import datetime as dt
 import logging
 import threading
 import time
+import uuid
 from typing import Any
 
 from kombu.utils.json import dumps, loads
@@ -112,16 +113,43 @@ def pending(redis_client=None) -> int:
     return int(redis_client.llen(key)) + int(redis_client.llen(_processing_key(key)))
 
 
+def _dead_key(key: str) -> str:
+    return f"{key}:dead"
+
+
+def _lock_key(key: str) -> str:
+    return f"{key}:lock"
+
+
+#: Seconds a replayer may hold the lock without renewing it; renewed after
+#: every published entry, so only a crashed replayer lets it expire.
+REPLAY_LOCK_TTL = 60
+
+
+def dead_letters(redis_client=None) -> int:
+    """Number of entries that could not be replayed for non-broker reasons."""
+    redis_client = redis_client or get_redis_client()
+    if redis_client is None:
+        return 0
+    return int(redis_client.llen(_dead_key(conf.OUTBOX_KEY)))
+
+
 def replay(app=None, *, limit: int | None = None, redis_client=None) -> int:
     """
     Publish stored tasks to the broker. Returns the number published.
 
-    Each envelope is moved to a processing list before publishing and
-    removed only after the broker accepts it, so a crash mid-replay never
-    loses tasks (they are recovered on the next replay). Stops at the first
-    publish failure, leaving the remaining tasks in place.
+    Only one replayer runs at a time across all processes (a Redis lock), so
+    concurrent triggers (beat, broker recovery in several producers, the CLI)
+    never publish the same entry twice. Each envelope moves to a processing
+    list before publishing and is removed only after the broker accepts it,
+    so a crashed replay never loses tasks. A broker error stops the replay
+    and keeps the entry at the head; any other error (an unknown task name,
+    bad options) moves the entry to a dead-letter list so it cannot block the
+    rest.
     """
     from celery import current_app
+
+    from .idempotency import release
 
     app = app or current_app
     redis_client = redis_client or get_redis_client()
@@ -129,9 +157,32 @@ def replay(app=None, *, limit: int | None = None, redis_client=None) -> int:
         return 0
 
     key = conf.OUTBOX_KEY
-    processing = _processing_key(key)
+    lock_key = _lock_key(key)
+    token = uuid.uuid4().hex
+    if not redis_client.set(lock_key, token, nx=True, ex=REPLAY_LOCK_TTL):
+        logger.debug("Outbox replay already running elsewhere; skipping.")
+        return 0
 
-    # Recover envelopes left behind by a replay that crashed.
+    try:
+        published = _replay_locked(app, redis_client, key, lock_key, token, limit)
+    finally:
+        release(redis_client, lock_key, token)
+
+    if published:
+        logger.info("Replayed %d task(s) from the outbox.", published)
+        from ..metrics.exporters import record_outbox_replayed
+
+        record_outbox_replayed(published)
+    return published
+
+
+def _replay_locked(app, redis_client, key, lock_key, token, limit) -> int:
+    from .task import BROKER_ERRORS
+
+    processing = _processing_key(key)
+    dead = _dead_key(key)
+
+    # We hold the lock, so anything in processing was left by a crashed replay.
     while redis_client.lmove(processing, key, "RIGHT", "LEFT") is not None:
         pass
 
@@ -142,11 +193,6 @@ def replay(app=None, *, limit: int | None = None, redis_client=None) -> int:
             break
         try:
             envelope = loads(raw)
-        except ValueError:
-            logger.error("Dropping malformed outbox entry: %r", raw)
-            redis_client.lrem(processing, 1, raw)
-            continue
-        try:
             app.send_task(
                 envelope["task"],
                 args=envelope["args"],
@@ -154,18 +200,17 @@ def replay(app=None, *, limit: int | None = None, redis_client=None) -> int:
                 task_id=envelope["id"],
                 **envelope["options"],
             )
-        except Exception as exc:
+        except BROKER_ERRORS as exc:
             logger.warning("Outbox replay stopped, broker still unavailable: %s", exc)
             redis_client.lmove(processing, key, "RIGHT", "LEFT")
             break
+        except Exception as exc:
+            logger.error("Moving unreplayable outbox entry to %s: %s", dead, exc)
+            redis_client.lmove(processing, dead, "RIGHT", "RIGHT")
+            continue
         redis_client.lrem(processing, 1, raw)
+        redis_client.expire(lock_key, REPLAY_LOCK_TTL)
         published += 1
-
-    if published:
-        logger.info("Replayed %d task(s) from the outbox.", published)
-        from ..metrics.exporters import record_outbox_replayed
-
-        record_outbox_replayed(published)
     return published
 
 

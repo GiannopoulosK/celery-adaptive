@@ -32,8 +32,9 @@ def health_response(*, strict: bool = False) -> tuple[int, dict[str, Any]]:
     redis = get_redis_client()
     try:
         body["outbox_pending"] = outbox.pending(redis) if redis else None
+        body["outbox_dead_letters"] = outbox.dead_letters(redis) if redis else None
     except Exception:
-        body["outbox_pending"] = None
+        body["outbox_pending"] = body["outbox_dead_letters"] = None
 
     unhealthy = {STATUS_DOWN} | ({STATUS_DEGRADED} if strict else set())
     return (503 if snapshot.status in unhealthy else 200), body
