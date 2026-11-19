@@ -1,0 +1,14 @@
+# Local services for the examples and the integration tests:
+#
+#   docker compose up -d
+#   export CELERY_ADAPTIVE_TEST_REDIS_URL=redis://localhost:6379/15
+#   export CELERY_ADAPTIVE_TEST_AMQP_URL=amqp://guest:guest@localhost:5672//
+#   export CELERY_ADAPTIVE_TEST_RABBITMQ_API=http://localhost:15672
+#   pytest
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    ports: ["5672:5672", "15672:15672"]
